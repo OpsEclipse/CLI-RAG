@@ -27,6 +27,7 @@ def test_crag_help_shows_exam_workflow_commands():
     assert "CRAG Local Search" in result.stdout
     assert "crag ingest" in result.stdout
     assert "crag search" in result.stdout
+    assert "--file" in result.stdout
     assert "crag open 1" in result.stdout
     assert "--keyword" in result.stdout
     assert "--semantic" in result.stdout

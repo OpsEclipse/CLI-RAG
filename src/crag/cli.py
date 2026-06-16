@@ -37,6 +37,11 @@ def help_command() -> None:
         'crag search "what shifts demand" --semantic',
     )
     commands.add_row(
+        "crag search --file",
+        "Search only matching file names or paths.",
+        'crag search "elasticity" --file "week 3"',
+    )
+    commands.add_row(
         "crag open",
         "Open a file from the most recent search.",
         "crag open 1",
