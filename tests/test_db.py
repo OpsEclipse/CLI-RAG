@@ -32,3 +32,19 @@ def test_foreign_keys_are_enabled(tmp_path):
     enabled = conn.execute("PRAGMA foreign_keys").fetchone()[0]
 
     assert enabled == 1
+
+
+def test_chunk_fts_supports_normal_delete(tmp_path):
+    db_path = tmp_path / "crag.db"
+    conn = connect(db_path)
+    init_db(conn)
+
+    conn.execute(
+        "INSERT INTO chunk_fts(rowid, text, topic, file_name) VALUES (?, ?, ?, ?)",
+        (123, "lecture notes about vectors", "linear algebra", "week1.pdf"),
+    )
+    conn.execute("DELETE FROM chunk_fts WHERE rowid = ?", (123,))
+
+    remaining = conn.execute("SELECT COUNT(*) FROM chunk_fts").fetchone()[0]
+
+    assert remaining == 0

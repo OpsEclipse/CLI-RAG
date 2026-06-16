@@ -57,7 +57,6 @@ def init_db(conn: sqlite3.Connection) -> None:
             text,
             topic,
             file_name,
-            content='',
             tokenize='porter unicode61'
         );
 
