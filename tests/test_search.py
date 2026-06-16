@@ -23,10 +23,11 @@ def seed_chunk(
     topic: str,
     location: str,
     vector: np.ndarray,
+    source_path: str | None = None,
 ) -> int:
     doc = conn.execute(
         "INSERT INTO documents(path, file_name, file_type, status) VALUES (?, ?, 'pptx', 'ready')",
-        (f"/tmp/{file_name}", file_name),
+        (source_path or f"/tmp/{file_name}", file_name),
     )
     document_id = int(doc.lastrowid)
     item = conn.execute(
@@ -134,6 +135,99 @@ def test_keyword_search_respects_file_filter(tmp_path):
     results = keyword_search(conn, "elasticity", top=5, file_filter="week-02")
 
     assert [result.file_name for result in results] == ["week-02.pptx"]
+
+
+def test_keyword_search_respects_file_filter_path_segment(tmp_path):
+    conn = connect(tmp_path / "crag.db")
+    init_db(conn)
+    seed_chunk(
+        conn,
+        "week-01.pptx",
+        "Elasticity appears here.",
+        "Elasticity",
+        "S1",
+        np.array([1, 0], dtype=np.float32),
+        source_path="/tmp/SYDE 161/week-01.pptx",
+    )
+    seed_chunk(
+        conn,
+        "week-02.pptx",
+        "Elasticity appears here too.",
+        "Elasticity",
+        "S2",
+        np.array([0, 1], dtype=np.float32),
+        source_path="/tmp/Other Course/week-02.pptx",
+    )
+
+    results = keyword_search(conn, "elasticity", top=5, file_filter="SYDE 161")
+
+    assert [result.file_name for result in results] == ["week-01.pptx"]
+
+
+def test_semantic_search_respects_file_filter_path_segment(tmp_path):
+    conn = connect(tmp_path / "crag.db")
+    init_db(conn)
+    seed_chunk(
+        conn,
+        "week-01.pptx",
+        "Elasticity appears here.",
+        "Elasticity",
+        "S1",
+        np.array([1, 0], dtype=np.float32),
+        source_path="/tmp/SYDE 161/week-01.pptx",
+    )
+    seed_chunk(
+        conn,
+        "week-02.pptx",
+        "Elasticity appears here too.",
+        "Elasticity",
+        "S2",
+        np.array([0, 1], dtype=np.float32),
+        source_path="/tmp/Other Course/week-02.pptx",
+    )
+
+    results = semantic_search(
+        conn,
+        "elasticity",
+        np.array([1, 0], dtype=np.float32),
+        top=5,
+        file_filter="SYDE 161",
+    )
+
+    assert [result.file_name for result in results] == ["week-01.pptx"]
+
+
+def test_hybrid_search_respects_file_filter_path_segment(tmp_path):
+    conn = connect(tmp_path / "crag.db")
+    init_db(conn)
+    seed_chunk(
+        conn,
+        "week-01.pptx",
+        "Elasticity appears here.",
+        "Elasticity",
+        "S1",
+        np.array([1, 0], dtype=np.float32),
+        source_path="/tmp/SYDE 161/week-01.pptx",
+    )
+    seed_chunk(
+        conn,
+        "week-02.pptx",
+        "Elasticity appears here too.",
+        "Elasticity",
+        "S2",
+        np.array([0, 1], dtype=np.float32),
+        source_path="/tmp/Other Course/week-02.pptx",
+    )
+
+    results = hybrid_search(
+        conn,
+        "elasticity",
+        np.array([1, 0], dtype=np.float32),
+        top=5,
+        file_filter="SYDE 161",
+    )
+
+    assert [result.file_name for result in results] == ["week-01.pptx"]
 
 
 def test_hybrid_search_uses_alpha_weighting(tmp_path):

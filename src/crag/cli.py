@@ -57,13 +57,20 @@ def help_command() -> None:
         "crag status",
     )
     commands.add_row(
+        "crag tui",
+        "Open the interactive local search screen.",
+        "crag tui",
+    )
+    commands.add_row(
         "crag delete",
         "Remove one file or the whole index.",
         "crag delete 2",
     )
     console.print(commands)
     console.print("Use quotes around paths or searches that contain spaces.")
-    console.print("During the exam, use search, open, list, status, and delete offline.")
+    console.print(
+        "During the exam, use tui, search, open, list, status, and delete offline."
+    )
 
 
 @app.command()
@@ -178,6 +185,14 @@ def search(
 
     save_last_search(conn, results, mode=mode)
     render_results(console, title, results)
+
+
+@app.command()
+def tui() -> None:
+    """Open the interactive local search screen."""
+    from crag.tui import run_tui
+
+    run_tui()
 
 
 @app.command(name="open")

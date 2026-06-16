@@ -1,3 +1,5 @@
+import types
+
 from typer.testing import CliRunner
 
 from crag.cli import app
@@ -31,7 +33,20 @@ def test_crag_help_shows_exam_workflow_commands():
     assert "crag open 1" in result.stdout
     assert "--keyword" in result.stdout
     assert "--semantic" in result.stdout
+    assert "crag tui" in result.stdout
     assert "crag delete" in result.stdout
+
+
+def test_cli_tui_runs_tui(monkeypatch):
+    runner = CliRunner()
+    calls = []
+    fake_tui = types.SimpleNamespace(run_tui=lambda: calls.append("ran"))
+    monkeypatch.setitem(__import__("sys").modules, "crag.tui", fake_tui)
+
+    result = runner.invoke(app, ["tui"])
+
+    assert result.exit_code == 0
+    assert calls == ["ran"]
 
 
 def test_delete_missing_positional_target_prints_message(tmp_path, monkeypatch):

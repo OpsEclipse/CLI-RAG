@@ -114,8 +114,9 @@ def keyword_scores(
     params: list[object] = [fts_query]
     file_clause = ""
     if file_filter:
-        file_clause = "AND documents.file_name LIKE ?"
-        params.append(f"%{file_filter}%")
+        file_clause = "AND (documents.file_name LIKE ? OR documents.path LIKE ?)"
+        like_filter = f"%{file_filter}%"
+        params.extend([like_filter, like_filter])
     params.append(top)
 
     rows = conn.execute(
@@ -144,8 +145,9 @@ def semantic_scores(
     params: list[object] = []
     file_clause = ""
     if file_filter:
-        file_clause = "WHERE documents.file_name LIKE ?"
-        params.append(f"%{file_filter}%")
+        file_clause = "WHERE documents.file_name LIKE ? OR documents.path LIKE ?"
+        like_filter = f"%{file_filter}%"
+        params.extend([like_filter, like_filter])
 
     rows = conn.execute(
         f"""
