@@ -2,6 +2,7 @@ from pathlib import Path
 from typing import Optional
 
 import typer
+from rich.console import Console
 
 app = typer.Typer(no_args_is_help=True)
 
@@ -73,6 +74,7 @@ def search(
 
     from crag import config
     from crag.db import connect, init_db
+    from crag.render import render_results
     from crag.search import (
         hybrid_search,
         keyword_search,
@@ -82,9 +84,11 @@ def search(
 
     conn = connect(config.DB_PATH)
     init_db(conn)
+    console = Console()
 
     if keyword:
         mode = "keyword"
+        title = "Keyword Results"
         results = keyword_search(conn, query, top=top, file_filter=file)
     else:
         from crag.embeddings import embed_texts, load_model
@@ -93,25 +97,19 @@ def search(
         query_vector = embed_texts(model, [query])[0]
         if semantic:
             mode = "semantic"
+            title = "Semantic Results"
             results = semantic_search(
                 conn, query, query_vector, top=top, file_filter=file
             )
         else:
             mode = "hybrid"
+            title = "Hybrid Results"
             results = hybrid_search(
                 conn, query, query_vector, alpha=alpha, top=top, file_filter=file
             )
 
     save_last_search(conn, results, mode=mode)
-    if not results:
-        typer.echo("No results found.")
-        return
-
-    for result in results:
-        typer.echo(
-            f"{result.result_number}. {result.file_name} {result.location} "
-            f"[{result.score:.3f}] {result.snippet}"
-        )
+    render_results(console, title, results)
 
 
 @app.command(name="open")
@@ -123,13 +121,25 @@ def open_result(result_number: int) -> None:
 @app.command()
 def status() -> None:
     """Show local index status."""
-    typer.echo("Status command registered")
+    from crag import config
+    from crag.db import connect, init_db
+    from crag.render import render_status
+
+    conn = connect(config.DB_PATH)
+    init_db(conn)
+    render_status(Console(), conn)
 
 
 @app.command(name="list")
 def list_documents(errors: bool = False) -> None:
     """List ingested files."""
-    typer.echo(f"List command registered: errors={errors}")
+    from crag import config
+    from crag.db import connect, init_db
+    from crag.render import render_document_list
+
+    conn = connect(config.DB_PATH)
+    init_db(conn)
+    render_document_list(Console(), conn, errors=errors)
 
 
 @app.command()
