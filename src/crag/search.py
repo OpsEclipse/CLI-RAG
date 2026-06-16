@@ -19,7 +19,8 @@ def normalize_scores(scores: dict[int, float]) -> dict[int, float]:
     low = min(scores.values())
     high = max(scores.values())
     if low == high:
-        return {chunk_id: 1.0 for chunk_id in scores}
+        normalized_score = 1.0 if high > 0.0 else 0.0
+        return {chunk_id: normalized_score for chunk_id in scores}
 
     return {
         chunk_id: (score - low) / (high - low) for chunk_id, score in scores.items()

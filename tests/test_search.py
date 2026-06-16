@@ -53,6 +53,7 @@ def seed_chunk(
 
 def test_normalize_scores_handles_empty_and_equal_values():
     assert normalize_scores({}) == {}
+    assert normalize_scores({1: 0.0, 2: 0.0}) == {1: 0.0, 2: 0.0}
     assert normalize_scores({1: 4.0, 2: 4.0}) == {1: 1.0, 2: 1.0}
     assert normalize_scores({1: 2.0, 2: 4.0}) == {1: 0.0, 2: 1.0}
 
@@ -196,6 +197,66 @@ def test_hybrid_search_overfetches_candidates_before_combining(tmp_path, monkeyp
     hybrid_search(conn, "beta", np.array([1, 0], dtype=np.float32), alpha=0.5, top=1)
 
     assert seen_limits == [("keyword", 20), ("semantic", 20)]
+
+
+def test_hybrid_search_does_not_promote_zero_semantic_only_result(
+    tmp_path, monkeypatch
+):
+    conn = connect(tmp_path / "crag.db")
+    init_db(conn)
+    strong_chunk_id = seed_chunk(
+        conn,
+        "strong.pptx",
+        "strong keyword match",
+        "Strong",
+        "S1",
+        np.array([1, 0], dtype=np.float32),
+    )
+    weak_chunk_id = seed_chunk(
+        conn,
+        "weak.pptx",
+        "weak keyword match",
+        "Weak",
+        "S2",
+        np.array([0, 1], dtype=np.float32),
+    )
+    no_keyword_chunk_id = seed_chunk(
+        conn,
+        "no-keyword.pptx",
+        "semantic only candidate",
+        "No Keyword",
+        "S3",
+        np.array([1, 1], dtype=np.float32),
+    )
+    floor_chunk_id = seed_chunk(
+        conn,
+        "floor.pptx",
+        "lowest keyword match",
+        "Floor",
+        "S4",
+        np.array([1, 1], dtype=np.float32),
+    )
+
+    def fake_keyword_scores(conn, query, file_filter=None, top=20):
+        return {strong_chunk_id: 3.0, weak_chunk_id: 2.0, floor_chunk_id: 1.0}
+
+    def fake_semantic_scores(conn, query_vector, file_filter=None, top=20):
+        return {
+            no_keyword_chunk_id: 0.0,
+            floor_chunk_id: 0.0,
+        }
+
+    monkeypatch.setattr(search_module, "keyword_scores", fake_keyword_scores)
+    monkeypatch.setattr(search_module, "semantic_scores", fake_semantic_scores)
+
+    results = hybrid_search(
+        conn, "keyword", np.array([0, 0], dtype=np.float32), alpha=0.5, top=3
+    )
+
+    result_ids = [result.chunk_id for result in results]
+    assert weak_chunk_id in result_ids
+    if no_keyword_chunk_id in result_ids:
+        assert result_ids.index(weak_chunk_id) < result_ids.index(no_keyword_chunk_id)
 
 
 def test_hybrid_search_rejects_alpha_outside_range(tmp_path):
