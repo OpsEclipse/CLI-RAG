@@ -1,14 +1,17 @@
 import json
 import importlib
+import sqlite3
 import sys
 import types
 from pathlib import Path
 
+import numpy as np
 import pytest
 from typer.testing import CliRunner
 
 from crag.cli import app
 from crag.db import connect, init_db
+from crag.embeddings import deserialize_vector
 from crag.ingest import ingest_file, scan_supported_files, write_raw_ocr
 
 
@@ -37,6 +40,16 @@ class SequenceOcrClient:
         payload = self.payloads[self.index]
         self.index += 1
         return payload
+
+
+class FakeEmbeddingModel:
+    def __init__(self):
+        self.encoded_texts: list[list[str]] = []
+
+    def encode(self, texts, normalize_embeddings=True):
+        assert normalize_embeddings is True
+        self.encoded_texts.append(list(texts))
+        return [np.array([1.0, 0.0], dtype=np.float32) for _ in texts]
 
 
 def test_mistral_ocr_client_supports_client_module_import(monkeypatch):
@@ -109,6 +122,70 @@ def test_ingest_file_stores_document_items_chunks_and_raw_ocr(tmp_path, temp_cou
     assert len(chunks) == 2
     assert chunks[0]["location"] == "S1"
     assert len(fts_rows) == 2
+
+
+def test_ingest_file_can_store_embeddings(tmp_path, temp_course_dir):
+    db_path = tmp_path / "crag.db"
+    raw_dir = tmp_path / "raw"
+    conn = connect(db_path)
+    init_db(conn)
+    source = temp_course_dir / "week-01.pptx"
+    source.write_text("fake")
+    fixture = Path("tests/fixtures/mistral_ocr_pptx.json")
+    embedding_model = FakeEmbeddingModel()
+
+    ingest_file(
+        conn,
+        source,
+        FakeOcrClient(fixture),
+        raw_dir,
+        embedding_model=embedding_model,
+    )
+    conn.commit()
+
+    rows = conn.execute("SELECT vector FROM embeddings ORDER BY chunk_id").fetchall()
+    assert len(rows) == 2
+    for row in rows:
+        np.testing.assert_array_equal(
+            deserialize_vector(row["vector"], expected_dimensions=2),
+            np.array([1.0, 0.0], dtype=np.float32),
+        )
+
+
+def test_failed_embedding_insert_rolls_back_ingest_rows(tmp_path, temp_course_dir):
+    db_path = tmp_path / "crag.db"
+    raw_dir = tmp_path / "raw"
+    conn = connect(db_path)
+    init_db(conn)
+    conn.execute(
+        """
+        CREATE TRIGGER fail_after_first_embedding
+        BEFORE INSERT ON embeddings
+        WHEN (SELECT COUNT(*) FROM embeddings) >= 1
+        BEGIN
+            SELECT RAISE(ABORT, 'embedding trigger failed');
+        END
+        """
+    )
+    conn.commit()
+    source = temp_course_dir / "week-01.pptx"
+    source.write_text("fake")
+    fixture = Path("tests/fixtures/mistral_ocr_pptx.json")
+
+    with pytest.raises(sqlite3.IntegrityError, match="embedding trigger failed"):
+        ingest_file(
+            conn,
+            source,
+            FakeOcrClient(fixture),
+            raw_dir,
+            embedding_model=FakeEmbeddingModel(),
+        )
+    conn.rollback()
+
+    assert conn.execute("SELECT COUNT(*) FROM documents").fetchone()[0] == 0
+    assert conn.execute("SELECT COUNT(*) FROM chunks").fetchone()[0] == 0
+    assert conn.execute("SELECT COUNT(*) FROM chunk_fts").fetchone()[0] == 0
+    assert conn.execute("SELECT COUNT(*) FROM embeddings").fetchone()[0] == 0
 
 
 def test_successful_ingest_file_on_clean_connection_can_be_rolled_back(
@@ -385,3 +462,54 @@ def test_ingest_cli_exits_nonzero_when_any_supported_file_fails(
     assert "Ingested 1 file(s). Failed 1." in result.output
     assert document_count == 1
     assert error_count == 1
+
+
+def test_ingest_cli_loads_embedding_model_once_and_passes_it_to_each_file(
+    monkeypatch, tmp_path, temp_course_dir
+):
+    import crag.config as config_module
+    import crag.db as db_module
+    import crag.embeddings as embeddings_module
+    import crag.ingest as ingest_module
+
+    db_path = tmp_path / "crag.db"
+    raw_dir = tmp_path / "raw"
+    conn = connect(db_path)
+    first = temp_course_dir / "week-01.pptx"
+    second = temp_course_dir / "week-02.pptx"
+    first.write_text("fake")
+    second.write_text("fake")
+    embedding_model = object()
+    load_calls = []
+    ingest_calls = []
+
+    class FakeMistralOcrClient:
+        def __init__(self, api_key: str):
+            self.api_key = api_key
+
+    def fake_load_model_for_download():
+        load_calls.append("load")
+        return embedding_model
+
+    def fake_ingest_file(conn_arg, path, client, raw_dir_arg, *, embedding_model=None):
+        ingest_calls.append((path, client, raw_dir_arg, embedding_model))
+        return 1
+
+    fake_ocr_module = types.SimpleNamespace(MistralOcrClient=FakeMistralOcrClient)
+    monkeypatch.setenv("MISTRAL_API_KEY", "test-key")
+    monkeypatch.setitem(sys.modules, "crag.ocr", fake_ocr_module)
+    monkeypatch.setattr(config_module, "RAW_OCR_DIR", raw_dir)
+    monkeypatch.setattr(db_module, "connect", lambda: conn)
+    monkeypatch.setattr(db_module, "ensure_app_dirs", lambda: None)
+    monkeypatch.setattr(
+        embeddings_module, "load_model_for_download", fake_load_model_for_download
+    )
+    monkeypatch.setattr(ingest_module, "ingest_file", fake_ingest_file)
+    runner = CliRunner()
+
+    result = runner.invoke(app, ["ingest", str(temp_course_dir)])
+
+    assert result.exit_code == 0
+    assert load_calls == ["load"]
+    assert [call[0] for call in ingest_calls] == [first, second]
+    assert [call[3] for call in ingest_calls] == [embedding_model, embedding_model]

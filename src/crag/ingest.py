@@ -7,7 +7,8 @@ import re
 import sqlite3
 from typing import Any
 
-from crag.config import RAW_OCR_DIR, SUPPORTED_EXTENSIONS
+from crag.config import EMBEDDING_MODEL_NAME, RAW_OCR_DIR, SUPPORTED_EXTENSIONS
+from crag.embeddings import embed_texts, serialize_vector
 
 
 MAX_RAW_OCR_STEM_LENGTH = 60
@@ -92,6 +93,7 @@ def ingest_file(
     path: Path,
     ocr_client: Any,
     raw_dir: Path = RAW_OCR_DIR,
+    embedding_model: Any | None = None,
 ) -> int:
     source_path = path.resolve()
     payload = ocr_client.parse_file(path)
@@ -133,6 +135,8 @@ def ingest_file(
         )
         document_id = int(document_cursor.lastrowid)
         kind = item_kind_for(path)
+        chunk_ids: list[int] = []
+        chunk_texts: list[str] = []
 
         for page in pages_from_ocr(payload):
             item_number = int(page.get("index", 0)) + 1
@@ -156,6 +160,19 @@ def ingest_file(
             )
             chunk_id = int(chunk_cursor.lastrowid)
             insert_fts(conn, chunk_id, text, topic, path.name)
+            chunk_ids.append(chunk_id)
+            chunk_texts.append(text)
+
+        if embedding_model is not None and chunk_texts:
+            vectors = embed_texts(embedding_model, chunk_texts)
+            for chunk_id, vector in zip(chunk_ids, vectors):
+                conn.execute(
+                    """
+                    INSERT INTO embeddings(chunk_id, model_name, vector)
+                    VALUES (?, ?, ?)
+                    """,
+                    (chunk_id, EMBEDDING_MODEL_NAME, serialize_vector(vector)),
+                )
 
         conn.execute(f"RELEASE SAVEPOINT {INGEST_SAVEPOINT}")
         return document_id
