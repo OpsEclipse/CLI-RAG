@@ -8,6 +8,7 @@ from crag.embeddings import (
     cosine_similarity,
     deserialize_vector,
     load_model,
+    load_model_for_download,
     serialize_vector,
 )
 
@@ -15,7 +16,7 @@ from crag.embeddings import (
 def test_vector_round_trip():
     vector = np.array([0.1, 0.2, 0.3], dtype=np.float32)
 
-    restored = deserialize_vector(serialize_vector(vector))
+    restored = deserialize_vector(serialize_vector(vector), expected_dimensions=3)
 
     assert restored.dtype == np.float32
     assert restored.tolist() == pytest.approx([0.1, 0.2, 0.3])
@@ -38,20 +39,64 @@ def test_cosine_similarity_returns_zero_for_zero_norm_vectors():
     assert cosine_similarity(nonzero, zero) == pytest.approx(0.0)
 
 
-def test_load_model_local_only_sets_offline_environment(monkeypatch):
-    created_with = []
+def test_load_model_local_only_sets_offline_environment_during_construction(monkeypatch):
+    constructor_env = []
 
     class FakeSentenceTransformer:
         def __init__(self, model_name: str):
-            created_with.append(model_name)
+            constructor_env.append(
+                (
+                    model_name,
+                    os.environ.get("HF_HUB_OFFLINE"),
+                    os.environ.get("TRANSFORMERS_OFFLINE"),
+                )
+            )
 
-    monkeypatch.delenv("HF_HUB_OFFLINE", raising=False)
+    monkeypatch.setenv("HF_HUB_OFFLINE", "previous-hf")
     monkeypatch.delenv("TRANSFORMERS_OFFLINE", raising=False)
     monkeypatch.setattr("crag.embeddings.SentenceTransformer", FakeSentenceTransformer)
 
     model = load_model(local_only=True)
 
     assert isinstance(model, FakeSentenceTransformer)
-    assert created_with == [EMBEDDING_MODEL_NAME]
-    assert os.environ["HF_HUB_OFFLINE"] == "1"
-    assert os.environ["TRANSFORMERS_OFFLINE"] == "1"
+    assert constructor_env == [(EMBEDDING_MODEL_NAME, "1", "1")]
+    assert os.environ["HF_HUB_OFFLINE"] == "previous-hf"
+    assert "TRANSFORMERS_OFFLINE" not in os.environ
+
+
+def test_load_model_for_download_does_not_inherit_local_only_environment(monkeypatch):
+    constructor_env = []
+
+    class FakeSentenceTransformer:
+        def __init__(self, model_name: str):
+            constructor_env.append(
+                (
+                    model_name,
+                    os.environ.get("HF_HUB_OFFLINE"),
+                    os.environ.get("TRANSFORMERS_OFFLINE"),
+                )
+            )
+
+    monkeypatch.delenv("HF_HUB_OFFLINE", raising=False)
+    monkeypatch.delenv("TRANSFORMERS_OFFLINE", raising=False)
+    monkeypatch.setattr("crag.embeddings.SentenceTransformer", FakeSentenceTransformer)
+
+    load_model(local_only=True)
+    load_model_for_download()
+
+    assert constructor_env == [
+        (EMBEDDING_MODEL_NAME, "1", "1"),
+        (EMBEDDING_MODEL_NAME, None, None),
+    ]
+
+
+def test_deserialize_vector_rejects_malformed_bytes():
+    with pytest.raises(ValueError, match="byte length"):
+        deserialize_vector(b"abc", expected_dimensions=3)
+
+
+def test_deserialize_vector_rejects_wrong_dimension():
+    raw = np.array([0.1, 0.2], dtype=np.float32).tobytes()
+
+    with pytest.raises(ValueError, match="expected 3"):
+        deserialize_vector(raw, expected_dimensions=3)
