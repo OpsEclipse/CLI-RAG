@@ -23,6 +23,12 @@ export MISTRAL_API_KEY="your-key"
 crag ingest ./course-materials
 ```
 
+You can also put the key in `.env` or `.env.local`:
+
+```bash
+MISTRAL_API_KEY=your-key
+```
+
 Ingestion may use the internet.
 
 It sends supported files to Mistral OCR. It also downloads the local embedding model from Hugging Face if it is not already cached.

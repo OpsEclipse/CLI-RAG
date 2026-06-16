@@ -361,14 +361,49 @@ def test_failed_reingest_rolls_back_even_if_caller_commits(tmp_path, temp_course
     assert conn.execute("SELECT COUNT(*) FROM chunk_fts").fetchone()[0] == original_fts_count
 
 
-def test_ingest_cli_requires_mistral_api_key(monkeypatch, temp_course_dir):
+def test_ingest_cli_requires_mistral_api_key(monkeypatch, tmp_path):
+    course_dir = tmp_path / "course"
+    course_dir.mkdir()
     monkeypatch.delenv("MISTRAL_API_KEY", raising=False)
+    monkeypatch.chdir(tmp_path)
     runner = CliRunner()
 
-    result = runner.invoke(app, ["ingest", str(temp_course_dir)])
+    result = runner.invoke(app, ["ingest", str(course_dir)])
 
     assert result.exit_code != 0
     assert "Set MISTRAL_API_KEY" in result.output
+
+
+def test_ingest_cli_loads_mistral_api_key_from_dotenv(monkeypatch, tmp_path):
+    import crag.config as config_module
+    import crag.db as db_module
+    import crag.embeddings as embeddings_module
+
+    db_path = tmp_path / "crag.db"
+    conn = connect(db_path)
+    course_dir = tmp_path / "course"
+    course_dir.mkdir()
+    captured_keys = []
+
+    class FakeMistralOcrClient:
+        def __init__(self, api_key: str):
+            captured_keys.append(api_key)
+
+    fake_ocr_module = types.SimpleNamespace(MistralOcrClient=FakeMistralOcrClient)
+    monkeypatch.delenv("MISTRAL_API_KEY", raising=False)
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / ".env").write_text("MISTRAL_API_KEY=dotenv-key\n")
+    monkeypatch.setitem(sys.modules, "crag.ocr", fake_ocr_module)
+    monkeypatch.setattr(config_module, "RAW_OCR_DIR", tmp_path / "raw")
+    monkeypatch.setattr(db_module, "connect", lambda: conn)
+    monkeypatch.setattr(db_module, "ensure_app_dirs", lambda: None)
+    monkeypatch.setattr(embeddings_module, "load_model_for_download", lambda: object())
+    runner = CliRunner()
+
+    result = runner.invoke(app, ["ingest", str(course_dir)])
+
+    assert result.exit_code == 0
+    assert captured_keys == ["dotenv-key"]
 
 
 def test_ingest_cli_missing_path_exits_nonzero(monkeypatch, tmp_path):

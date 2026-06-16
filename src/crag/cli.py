@@ -15,11 +15,12 @@ def ingest(path: Path) -> None:
     if not path.exists():
         raise typer.BadParameter(f"Input path does not exist: {path}")
 
-    from crag.config import RAW_OCR_DIR
+    from crag.config import RAW_OCR_DIR, load_dotenv
     from crag.db import connect, ensure_app_dirs, init_db
     from crag.embeddings import load_model_for_download
     from crag.ingest import ingest_file, scan_supported_files
 
+    load_dotenv()
     api_key = os.environ.get("MISTRAL_API_KEY")
     if not api_key:
         raise typer.BadParameter("Set MISTRAL_API_KEY before running ingestion.")
