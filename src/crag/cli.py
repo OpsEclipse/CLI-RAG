@@ -63,9 +63,53 @@ def search(
     file: Optional[str] = None,
 ) -> None:
     """Search the local index."""
-    typer.echo(
-        f"Search command registered: {query} keyword={keyword} semantic={semantic} alpha={alpha} top={top} file={file}"
+    if keyword and semantic:
+        typer.echo("Choose only one of --keyword or --semantic.")
+        raise typer.Exit(2)
+    if alpha < 0.0 or alpha > 1.0:
+        raise typer.BadParameter("alpha must be between 0.0 and 1.0")
+
+    from crag import config
+    from crag.db import connect, init_db
+    from crag.search import (
+        hybrid_search,
+        keyword_search,
+        save_last_search,
+        semantic_search,
     )
+
+    conn = connect(config.DB_PATH)
+    init_db(conn)
+
+    if keyword:
+        mode = "keyword"
+        results = keyword_search(conn, query, top=top, file_filter=file)
+    else:
+        from crag.embeddings import embed_texts, load_model
+
+        model = load_model(local_only=True)
+        query_vector = embed_texts(model, [query])[0]
+        if semantic:
+            mode = "semantic"
+            results = semantic_search(
+                conn, query, query_vector, top=top, file_filter=file
+            )
+        else:
+            mode = "hybrid"
+            results = hybrid_search(
+                conn, query, query_vector, alpha=alpha, top=top, file_filter=file
+            )
+
+    save_last_search(conn, results, mode=mode)
+    if not results:
+        typer.echo("No results found.")
+        return
+
+    for result in results:
+        typer.echo(
+            f"{result.result_number}. {result.file_name} {result.location} "
+            f"[{result.score:.3f}] {result.snippet}"
+        )
 
 
 @app.command(name="open")
