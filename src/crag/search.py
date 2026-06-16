@@ -9,6 +9,8 @@ import numpy as np
 from crag.embeddings import cosine_similarity, deserialize_vector
 from crag.models import SearchResult
 
+_FTS_TERM_RE = re.compile(r"\w+", re.UNICODE)
+
 
 def normalize_scores(scores: dict[int, float]) -> dict[int, float]:
     if not scores:
@@ -22,6 +24,18 @@ def normalize_scores(scores: dict[int, float]) -> dict[int, float]:
     return {
         chunk_id: (score - low) / (high - low) for chunk_id, score in scores.items()
     }
+
+
+def build_fts_query(query: str) -> str | None:
+    terms = _FTS_TERM_RE.findall(query)
+    if not terms:
+        return None
+
+    quoted_terms = []
+    for term in terms:
+        escaped = term.replace('"', '""')
+        quoted_terms.append(f'"{escaped}"')
+    return " OR ".join(quoted_terms)
 
 
 def snippet(text: str, query: str, limit: int = 120) -> str:
@@ -92,7 +106,11 @@ def keyword_scores(
     file_filter: str | None = None,
     top: int = 20,
 ) -> dict[int, float]:
-    params: list[object] = [query]
+    fts_query = build_fts_query(query)
+    if fts_query is None:
+        return {}
+
+    params: list[object] = [fts_query]
     file_clause = ""
     if file_filter:
         file_clause = "AND documents.file_name LIKE ?"
@@ -141,9 +159,12 @@ def semantic_scores(
 
     scores: dict[int, float] = {}
     for row in rows:
-        vector = deserialize_vector(
-            row["vector"], expected_dimensions=int(query_vector.size)
-        )
+        try:
+            vector = deserialize_vector(
+                row["vector"], expected_dimensions=int(query_vector.size)
+            )
+        except ValueError:
+            continue
         scores[int(row["chunk_id"])] = cosine_similarity(query_vector, vector)
 
     return dict(sorted(scores.items(), key=lambda item: item[1], reverse=True)[:top])
@@ -187,11 +208,14 @@ def hybrid_search(
     if alpha < 0.0 or alpha > 1.0:
         raise ValueError("alpha must be between 0.0 and 1.0")
 
+    candidate_limit = max(top * 4, 20)
     keyword = normalize_scores(
-        keyword_scores(conn, query, file_filter=file_filter, top=top)
+        keyword_scores(conn, query, file_filter=file_filter, top=candidate_limit)
     )
     semantic = normalize_scores(
-        semantic_scores(conn, query_vector, file_filter=file_filter, top=top)
+        semantic_scores(
+            conn, query_vector, file_filter=file_filter, top=candidate_limit
+        )
     )
     chunk_ids = set(keyword) | set(semantic)
     final_scores = {

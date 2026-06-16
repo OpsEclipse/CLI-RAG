@@ -68,6 +68,8 @@ def search(
         raise typer.Exit(2)
     if alpha < 0.0 or alpha > 1.0:
         raise typer.BadParameter("alpha must be between 0.0 and 1.0")
+    if top < 1:
+        raise typer.BadParameter("top must be at least 1")
 
     from crag import config
     from crag.db import connect, init_db

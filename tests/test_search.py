@@ -4,6 +4,7 @@ import numpy as np
 import pytest
 from typer.testing import CliRunner
 
+import crag.search as search_module
 from crag.db import connect, init_db
 from crag.embeddings import serialize_vector
 from crag.search import (
@@ -11,6 +12,7 @@ from crag.search import (
     keyword_search,
     normalize_scores,
     save_last_search,
+    semantic_search,
 )
 
 
@@ -74,6 +76,40 @@ def test_keyword_search_finds_matching_chunk(tmp_path):
     assert results[0].location == "S1"
 
 
+def test_keyword_search_handles_punctuation_query(tmp_path):
+    conn = connect(tmp_path / "crag.db")
+    init_db(conn)
+    seed_chunk(
+        conn,
+        "week-01.pptx",
+        "Price elasticity measures responsiveness.",
+        "Elasticity",
+        "S1",
+        np.array([1, 0], dtype=np.float32),
+    )
+
+    results = keyword_search(conn, "what is elasticity?", top=5)
+
+    assert [result.file_name for result in results] == ["week-01.pptx"]
+
+
+def test_keyword_search_returns_empty_for_only_punctuation(tmp_path):
+    conn = connect(tmp_path / "crag.db")
+    init_db(conn)
+    seed_chunk(
+        conn,
+        "week-01.pptx",
+        "Price elasticity measures responsiveness.",
+        "Elasticity",
+        "S1",
+        np.array([1, 0], dtype=np.float32),
+    )
+
+    results = keyword_search(conn, '?!:"', top=5)
+
+    assert results == []
+
+
 def test_keyword_search_respects_file_filter(tmp_path):
     conn = connect(tmp_path / "crag.db")
     init_db(conn)
@@ -125,6 +161,43 @@ def test_hybrid_search_uses_alpha_weighting(tmp_path):
     assert results[0].file_name == "semantic.pptx"
 
 
+def test_hybrid_search_overfetches_candidates_before_combining(tmp_path, monkeypatch):
+    conn = connect(tmp_path / "crag.db")
+    init_db(conn)
+    first_chunk_id = seed_chunk(
+        conn,
+        "first.pptx",
+        "alpha beta",
+        "First",
+        "S1",
+        np.array([1, 0], dtype=np.float32),
+    )
+    second_chunk_id = seed_chunk(
+        conn,
+        "second.pptx",
+        "beta gamma",
+        "Second",
+        "S2",
+        np.array([0, 1], dtype=np.float32),
+    )
+    seen_limits = []
+
+    def fake_keyword_scores(conn, query, file_filter=None, top=20):
+        seen_limits.append(("keyword", top))
+        return {first_chunk_id: 1.0, second_chunk_id: 0.7}
+
+    def fake_semantic_scores(conn, query_vector, file_filter=None, top=20):
+        seen_limits.append(("semantic", top))
+        return {first_chunk_id: 0.2, second_chunk_id: 1.0}
+
+    monkeypatch.setattr(search_module, "keyword_scores", fake_keyword_scores)
+    monkeypatch.setattr(search_module, "semantic_scores", fake_semantic_scores)
+
+    hybrid_search(conn, "beta", np.array([1, 0], dtype=np.float32), alpha=0.5, top=1)
+
+    assert seen_limits == [("keyword", 20), ("semantic", 20)]
+
+
 def test_hybrid_search_rejects_alpha_outside_range(tmp_path):
     conn = connect(tmp_path / "crag.db")
     init_db(conn)
@@ -132,6 +205,34 @@ def test_hybrid_search_rejects_alpha_outside_range(tmp_path):
 
     with pytest.raises(ValueError, match="alpha"):
         hybrid_search(conn, "beta", query_vector, alpha=1.1)
+
+
+def test_semantic_search_skips_malformed_vectors(tmp_path):
+    conn = connect(tmp_path / "crag.db")
+    init_db(conn)
+    seed_chunk(
+        conn,
+        "broken.pptx",
+        "Broken vector row.",
+        "Broken",
+        "S1",
+        np.array([0, 1], dtype=np.float32),
+    )
+    conn.execute("UPDATE embeddings SET vector = ?", (b"abc",))
+    valid_chunk_id = seed_chunk(
+        conn,
+        "valid.pptx",
+        "Valid vector row.",
+        "Valid",
+        "S2",
+        np.array([1, 0], dtype=np.float32),
+    )
+
+    results = semantic_search(
+        conn, "valid", np.array([1, 0], dtype=np.float32), top=5
+    )
+
+    assert [result.chunk_id for result in results] == [valid_chunk_id]
 
 
 def test_save_last_search_replaces_previous_rows(tmp_path):
@@ -200,6 +301,17 @@ def test_cli_rejects_keyword_and_semantic_together():
 
     assert result.exit_code != 0
     assert "Choose only one" in result.stdout
+
+
+def test_cli_rejects_top_less_than_one():
+    runner = CliRunner()
+
+    result = runner.invoke(
+        app_for_test(), ["search", "elasticity", "--keyword", "--top", "0"]
+    )
+
+    assert result.exit_code != 0
+    assert "top must be at least 1" in result.output
 
 
 def app_for_test():
