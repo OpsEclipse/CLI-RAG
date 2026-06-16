@@ -9,7 +9,41 @@ app = typer.Typer(no_args_is_help=True)
 @app.command()
 def ingest(path: Path) -> None:
     """Parse files and add them to the local index."""
-    typer.echo(f"Ingest command registered for: {path}")
+    import os
+
+    from crag.config import RAW_OCR_DIR
+    from crag.db import connect, ensure_app_dirs, init_db
+    from crag.ingest import ingest_file, scan_supported_files
+
+    api_key = os.environ.get("MISTRAL_API_KEY")
+    if not api_key:
+        raise typer.BadParameter("Set MISTRAL_API_KEY before running ingestion.")
+
+    from crag.ocr import MistralOcrClient
+
+    ensure_app_dirs()
+    conn = connect()
+    init_db(conn)
+    client = MistralOcrClient(api_key)
+    ready = 0
+    failed = 0
+
+    for file_path in scan_supported_files(path):
+        try:
+            ingest_file(conn, file_path, client, RAW_OCR_DIR)
+            ready += 1
+        except Exception as exc:
+            failed += 1
+            conn.rollback()
+            conn.execute(
+                "INSERT INTO ingest_errors(path, error_type, message) VALUES (?, ?, ?)",
+                (str(file_path), type(exc).__name__, str(exc)),
+            )
+            conn.commit()
+
+    typer.echo(
+        f"Ingested {ready} file(s). Failed {failed}. Skipped unsupported files automatically."
+    )
 
 
 @app.command()
