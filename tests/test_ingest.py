@@ -1,4 +1,5 @@
 import json
+import importlib
 import sys
 import types
 from pathlib import Path
@@ -36,6 +37,29 @@ class SequenceOcrClient:
         payload = self.payloads[self.index]
         self.index += 1
         return payload
+
+
+def test_mistral_ocr_client_supports_client_module_import(monkeypatch):
+    class FakeMistral:
+        def __init__(self, api_key: str):
+            self.api_key = api_key
+
+    fake_root_module = types.ModuleType("mistralai")
+    fake_client_module = types.ModuleType("mistralai.client")
+    fake_client_module.Mistral = FakeMistral
+    monkeypatch.setitem(sys.modules, "mistralai", fake_root_module)
+    monkeypatch.setitem(sys.modules, "mistralai.client", fake_client_module)
+    previous_ocr_module = sys.modules.pop("crag.ocr", None)
+
+    try:
+        ocr_module = importlib.import_module("crag.ocr")
+        client = ocr_module.MistralOcrClient("test-key")
+
+        assert isinstance(client.client, FakeMistral)
+    finally:
+        sys.modules.pop("crag.ocr", None)
+        if previous_ocr_module is not None:
+            sys.modules["crag.ocr"] = previous_ocr_module
 
 
 def test_scan_supported_files_skips_unknown_extensions(temp_course_dir):
@@ -152,6 +176,38 @@ def test_failed_reingest_does_not_overwrite_existing_raw_ocr(
 
     assert existing_raw_path.read_text() == existing_raw_text
     assert len(list(raw_dir.glob("*.json"))) == 1
+
+
+def test_failed_reingest_rolls_back_even_if_caller_commits(tmp_path, temp_course_dir):
+    db_path = tmp_path / "crag.db"
+    raw_dir = tmp_path / "raw"
+    conn = connect(db_path)
+    init_db(conn)
+    source = temp_course_dir / "week-01.pptx"
+    source.write_text("fake")
+    first_payload = json.loads(Path("tests/fixtures/mistral_ocr_pptx.json").read_text())
+    invalid_payload = {
+        "pages": [
+            {
+                "index": "not-a-number",
+                "markdown": "# Bad Replacement\n\nThis should not persist.",
+            }
+        ]
+    }
+    client = SequenceOcrClient([first_payload, invalid_payload])
+
+    ingest_file(conn, source, client, raw_dir)
+    original_doc_count = conn.execute("SELECT COUNT(*) FROM documents").fetchone()[0]
+    original_chunk_count = conn.execute("SELECT COUNT(*) FROM chunks").fetchone()[0]
+    original_fts_count = conn.execute("SELECT COUNT(*) FROM chunk_fts").fetchone()[0]
+
+    with pytest.raises(ValueError):
+        ingest_file(conn, source, client, raw_dir)
+    conn.commit()
+
+    assert conn.execute("SELECT COUNT(*) FROM documents").fetchone()[0] == original_doc_count
+    assert conn.execute("SELECT COUNT(*) FROM chunks").fetchone()[0] == original_chunk_count
+    assert conn.execute("SELECT COUNT(*) FROM chunk_fts").fetchone()[0] == original_fts_count
 
 
 def test_ingest_cli_requires_mistral_api_key(monkeypatch, temp_course_dir):

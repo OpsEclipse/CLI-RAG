@@ -156,6 +156,7 @@ def ingest_file(
         conn.commit()
         return document_id
     except Exception:
+        conn.rollback()
         if str(raw_path) not in existing_raw_paths:
             raw_path.unlink(missing_ok=True)
         raise
