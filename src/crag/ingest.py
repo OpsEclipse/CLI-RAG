@@ -11,6 +11,7 @@ from crag.config import RAW_OCR_DIR, SUPPORTED_EXTENSIONS
 
 
 MAX_RAW_OCR_STEM_LENGTH = 60
+INGEST_SAVEPOINT = "crag_ingest_file"
 
 
 def _payload_digest(payload: dict[str, Any]) -> str:
@@ -103,6 +104,7 @@ def ingest_file(
         )
     }
     raw_path = write_raw_ocr(source_path, payload, raw_dir)
+    conn.execute(f"SAVEPOINT {INGEST_SAVEPOINT}")
     try:
         old_chunk_ids = [
             int(row["id"])
@@ -153,10 +155,11 @@ def ingest_file(
             chunk_id = int(chunk_cursor.lastrowid)
             insert_fts(conn, chunk_id, text, topic, path.name)
 
-        conn.commit()
+        conn.execute(f"RELEASE SAVEPOINT {INGEST_SAVEPOINT}")
         return document_id
     except Exception:
-        conn.rollback()
+        conn.execute(f"ROLLBACK TO SAVEPOINT {INGEST_SAVEPOINT}")
+        conn.execute(f"RELEASE SAVEPOINT {INGEST_SAVEPOINT}")
         if str(raw_path) not in existing_raw_paths:
             raw_path.unlink(missing_ok=True)
         raise

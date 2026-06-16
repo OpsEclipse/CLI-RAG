@@ -35,6 +35,7 @@ def ingest(path: Path) -> None:
     for file_path in files:
         try:
             ingest_file(conn, file_path, client, RAW_OCR_DIR)
+            conn.commit()
             ready += 1
         except Exception as exc:
             failed += 1

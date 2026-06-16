@@ -111,6 +111,27 @@ def test_ingest_file_stores_document_items_chunks_and_raw_ocr(tmp_path, temp_cou
     assert len(fts_rows) == 2
 
 
+def test_successful_ingest_file_does_not_commit_unrelated_pending_work(
+    tmp_path, temp_course_dir
+):
+    db_path = tmp_path / "crag.db"
+    raw_dir = tmp_path / "raw"
+    conn = connect(db_path)
+    init_db(conn)
+    source = temp_course_dir / "week-01.pptx"
+    source.write_text("fake")
+    fixture = Path("tests/fixtures/mistral_ocr_pptx.json")
+    conn.execute(
+        "INSERT INTO ingest_errors(path, error_type, message) VALUES (?, ?, ?)",
+        ("unrelated.pptx", "TestError", "pending caller work"),
+    )
+
+    ingest_file(conn, source, FakeOcrClient(fixture), raw_dir)
+    conn.rollback()
+
+    assert conn.execute("SELECT COUNT(*) FROM ingest_errors").fetchone()[0] == 0
+
+
 def test_reingest_same_file_replaces_old_rows_and_fts(tmp_path, temp_course_dir):
     db_path = tmp_path / "crag.db"
     raw_dir = tmp_path / "raw"
@@ -142,6 +163,38 @@ def test_reingest_same_file_replaces_old_rows_and_fts(tmp_path, temp_course_dir)
     assert [row["text"] for row in fts_rows] == [
         "# Updated Topic\n\nOnly the current content should remain."
     ]
+
+
+def test_failed_ingest_file_preserves_unrelated_pending_work(
+    tmp_path, temp_course_dir
+):
+    db_path = tmp_path / "crag.db"
+    raw_dir = tmp_path / "raw"
+    conn = connect(db_path)
+    init_db(conn)
+    source = temp_course_dir / "week-01.pptx"
+    source.write_text("fake")
+    invalid_payload = {
+        "pages": [
+            {
+                "index": "not-a-number",
+                "markdown": "# Bad Replacement\n\nThis should not persist.",
+            }
+        ]
+    }
+    conn.execute(
+        "INSERT INTO ingest_errors(path, error_type, message) VALUES (?, ?, ?)",
+        ("unrelated.pptx", "TestError", "pending caller work"),
+    )
+
+    with pytest.raises(ValueError):
+        ingest_file(conn, source, PayloadOcrClient(invalid_payload), raw_dir)
+    conn.commit()
+
+    assert conn.execute("SELECT COUNT(*) FROM ingest_errors").fetchone()[0] == 1
+    assert conn.execute("SELECT COUNT(*) FROM documents").fetchone()[0] == 0
+    assert conn.execute("SELECT COUNT(*) FROM chunks").fetchone()[0] == 0
+    assert conn.execute("SELECT COUNT(*) FROM chunk_fts").fetchone()[0] == 0
 
 
 def test_failed_reingest_does_not_overwrite_existing_raw_ocr(
