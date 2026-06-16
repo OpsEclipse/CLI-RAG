@@ -5,6 +5,7 @@ from typer.testing import CliRunner
 
 from crag.cli import app
 from crag.db import connect, init_db
+from crag.embeddings import serialize_vector
 from crag.models import SearchResult
 from crag.render import render_document_list, render_results, render_status
 
@@ -60,10 +61,18 @@ def test_render_results_outputs_table():
     assert "S1" in output
 
 
-def test_render_status_outputs_counts_and_offline_search(tmp_path):
+def test_render_status_outputs_counts_last_ingest_and_available_semantic_index(
+    tmp_path,
+):
     conn = connect(tmp_path / "crag.db")
     init_db(conn)
     seed_document(conn)
+    chunk_id = conn.execute("SELECT id FROM chunks").fetchone()["id"]
+    conn.execute(
+        "INSERT INTO embeddings(chunk_id, model_name, vector) VALUES (?, 'test-model', ?)",
+        (chunk_id, serialize_vector([1.0, 0.0])),
+    )
+    conn.commit()
     console = Console(record=True, width=120)
 
     render_status(console, conn)
@@ -72,9 +81,26 @@ def test_render_status_outputs_counts_and_offline_search(tmp_path):
     assert "Index Status" in output
     assert "Documents" in output
     assert "1" in output
+    assert "Items" in output
     assert "Chunks" in output
+    assert "Last ingested" in output
+    assert "Semantic index" in output
+    assert "Available" in output
     assert "Search online" in output
     assert "No" in output
+
+
+def test_render_status_outputs_unavailable_when_no_embeddings_exist(tmp_path):
+    conn = connect(tmp_path / "crag.db")
+    init_db(conn)
+    seed_document(conn)
+    console = Console(record=True, width=120)
+
+    render_status(console, conn)
+
+    output = console.export_text()
+    assert "Semantic index" in output
+    assert "Unavailable" in output
 
 
 def test_render_document_list_stores_last_list_results(tmp_path):

@@ -33,13 +33,20 @@ def render_results(console: Console, title: str, results: list[SearchResult]) ->
 
 def render_status(console: Console, conn: sqlite3.Connection) -> None:
     document_count = conn.execute("SELECT COUNT(*) FROM documents").fetchone()[0]
+    item_count = conn.execute("SELECT COUNT(*) FROM items").fetchone()[0]
     chunk_count = conn.execute("SELECT COUNT(*) FROM chunks").fetchone()[0]
+    last_ingested = conn.execute("SELECT MAX(updated_at) FROM documents").fetchone()[0]
+    embedding_count = conn.execute("SELECT COUNT(*) FROM embeddings").fetchone()[0]
+    semantic_index = "Available" if embedding_count > 0 else "Unavailable"
 
     table = Table(title="Index Status")
     table.add_column("Field")
     table.add_column("Value")
     table.add_row("Documents", str(document_count))
+    table.add_row("Items", str(item_count))
     table.add_row("Chunks", str(chunk_count))
+    table.add_row("Last ingested", str(last_ingested) if last_ingested else "Never")
+    table.add_row("Semantic index", semantic_index)
     table.add_row("Search online", "No")
 
     console.print(table)
