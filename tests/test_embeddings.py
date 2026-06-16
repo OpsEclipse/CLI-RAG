@@ -43,12 +43,13 @@ def test_load_model_local_only_sets_offline_environment_during_construction(monk
     constructor_env = []
 
     class FakeSentenceTransformer:
-        def __init__(self, model_name: str):
+        def __init__(self, model_name: str, **kwargs):
             constructor_env.append(
                 (
                     model_name,
                     os.environ.get("HF_HUB_OFFLINE"),
                     os.environ.get("TRANSFORMERS_OFFLINE"),
+                    kwargs,
                 )
             )
 
@@ -59,7 +60,9 @@ def test_load_model_local_only_sets_offline_environment_during_construction(monk
     model = load_model(local_only=True)
 
     assert isinstance(model, FakeSentenceTransformer)
-    assert constructor_env == [(EMBEDDING_MODEL_NAME, "1", "1")]
+    assert constructor_env == [
+        (EMBEDDING_MODEL_NAME, "1", "1", {"local_files_only": True})
+    ]
     assert os.environ["HF_HUB_OFFLINE"] == "previous-hf"
     assert "TRANSFORMERS_OFFLINE" not in os.environ
 
@@ -68,12 +71,13 @@ def test_load_model_for_download_does_not_inherit_local_only_environment(monkeyp
     constructor_env = []
 
     class FakeSentenceTransformer:
-        def __init__(self, model_name: str):
+        def __init__(self, model_name: str, **kwargs):
             constructor_env.append(
                 (
                     model_name,
                     os.environ.get("HF_HUB_OFFLINE"),
                     os.environ.get("TRANSFORMERS_OFFLINE"),
+                    kwargs,
                 )
             )
 
@@ -85,8 +89,8 @@ def test_load_model_for_download_does_not_inherit_local_only_environment(monkeyp
     load_model_for_download()
 
     assert constructor_env == [
-        (EMBEDDING_MODEL_NAME, "1", "1"),
-        (EMBEDDING_MODEL_NAME, None, None),
+        (EMBEDDING_MODEL_NAME, "1", "1", {"local_files_only": True}),
+        (EMBEDDING_MODEL_NAME, None, None, {}),
     ]
 
 

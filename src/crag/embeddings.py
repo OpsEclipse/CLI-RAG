@@ -20,7 +20,7 @@ def load_model(local_only: bool = True) -> SentenceTransformer:
     try:
         os.environ["HF_HUB_OFFLINE"] = "1"
         os.environ["TRANSFORMERS_OFFLINE"] = "1"
-        return SentenceTransformer(EMBEDDING_MODEL_NAME)
+        return SentenceTransformer(EMBEDDING_MODEL_NAME, local_files_only=True)
     finally:
         for name in _OFFLINE_ENV_VARS:
             if name in missing_values:
