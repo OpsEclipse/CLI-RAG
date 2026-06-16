@@ -104,6 +104,8 @@ def ingest_file(
         )
     }
     raw_path = write_raw_ocr(source_path, payload, raw_dir)
+    if not conn.in_transaction:
+        conn.execute("BEGIN")
     conn.execute(f"SAVEPOINT {INGEST_SAVEPOINT}")
     try:
         old_chunk_ids = [

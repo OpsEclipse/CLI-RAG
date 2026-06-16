@@ -111,6 +111,27 @@ def test_ingest_file_stores_document_items_chunks_and_raw_ocr(tmp_path, temp_cou
     assert len(fts_rows) == 2
 
 
+def test_successful_ingest_file_on_clean_connection_can_be_rolled_back(
+    tmp_path, temp_course_dir
+):
+    db_path = tmp_path / "crag.db"
+    raw_dir = tmp_path / "raw"
+    conn = connect(db_path)
+    init_db(conn)
+    source = temp_course_dir / "week-01.pptx"
+    source.write_text("fake")
+    fixture = Path("tests/fixtures/mistral_ocr_pptx.json")
+
+    ingest_file(conn, source, FakeOcrClient(fixture), raw_dir)
+    assert conn.execute("SELECT COUNT(*) FROM documents").fetchone()[0] == 1
+
+    conn.rollback()
+
+    assert conn.execute("SELECT COUNT(*) FROM documents").fetchone()[0] == 0
+    assert conn.execute("SELECT COUNT(*) FROM chunks").fetchone()[0] == 0
+    assert conn.execute("SELECT COUNT(*) FROM chunk_fts").fetchone()[0] == 0
+
+
 def test_successful_ingest_file_does_not_commit_unrelated_pending_work(
     tmp_path, temp_course_dir
 ):
