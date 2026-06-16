@@ -159,6 +159,40 @@ crag list --errors
 
 Shows ingested files in a table. `--errors` shows only failed or warning files.
 
+### Delete
+
+```bash
+crag delete 3
+crag delete /course/week-04.pptx
+crag delete --all
+```
+
+Deletes ingested content from the local index.
+
+Delete behavior:
+
+- `crag delete 3` deletes the file with row number `3` from the most recent `crag list` output.
+- `crag delete /course/week-04.pptx` deletes the indexed record for that source file path.
+- `crag delete --all` clears the whole local index.
+
+Deleting a file removes:
+
+- Document metadata.
+- Pages or slides.
+- Text chunks.
+- FTS5 keyword search rows.
+- Semantic vectors.
+- Raw OCR response for that file.
+- Last-search rows that point to deleted chunks.
+
+The original source file on disk is not deleted.
+
+`crag delete --all` must ask for confirmation unless `--yes` is passed:
+
+```bash
+crag delete --all --yes
+```
+
 ## Result Display
 
 Use Rich for terminal tables.
@@ -215,12 +249,27 @@ SQLite stores:
 - Search metadata.
 - Ingest status.
 - Last search results.
+- Most recent `crag list` results.
 
 Use SQLite FTS5 for keyword search. FTS5 is SQLite's built-in full-text search system.
 
 Use a local vector index for semantic search. A vector index stores numeric text fingerprints for meaning-based lookup.
 
 The semantic model must run locally. It must not call the internet during search.
+
+## Embedding Model
+
+Use `BAAI/bge-small-en-v1.5` through `sentence-transformers` for version 1 semantic search.
+
+Reasons:
+
+- It runs locally.
+- It is small enough for laptop use.
+- It is designed for retrieval.
+- It creates 384-dimension vectors, which keeps storage and search light.
+- It does not generate text.
+
+The model must be downloaded during setup or ingestion while internet is allowed. Search must use the cached local model only.
 
 ## Indexing Design
 
@@ -300,6 +349,9 @@ Tests should cover:
 - Result table rendering.
 - `crag open` lookup from last search results.
 - Error listing.
+- Single-file delete by list row.
+- Single-file delete by path.
+- Full index delete with confirmation behavior.
 
 Integration tests should use fixture OCR responses instead of calling Mistral.
 
