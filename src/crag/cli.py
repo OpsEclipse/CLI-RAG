@@ -126,7 +126,12 @@ def open_result(result_number: int) -> None:
         typer.echo(str(exc), err=True)
         raise typer.Exit(1) from exc
 
-    openers.open_file(target.file_path)
+    try:
+        openers.open_file(target.file_path)
+    except (FileNotFoundError, OSError, RuntimeError) as exc:
+        typer.secho(str(exc), err=True, fg=typer.colors.RED)
+        raise typer.Exit(1) from exc
+
     typer.echo(f"Opened: {target.file_path}")
     typer.echo(f"Go to: {target.location}")
     typer.echo(f"Topic: {target.topic}")

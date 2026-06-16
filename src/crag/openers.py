@@ -1,3 +1,4 @@
+import os
 import re
 import subprocess
 import sys
@@ -44,17 +45,23 @@ def get_last_search_target(conn: Connection, result_number: int) -> OpenTarget:
 
 
 def open_file(path: Path) -> None:
+    if not path.exists():
+        raise FileNotFoundError(f"Source file does not exist: {path}")
+
     file_path = str(path)
     if sys.platform == "darwin":
         command = ["open", file_path]
+        _run_opener_command(command)
     elif sys.platform.startswith("linux"):
         command = ["xdg-open", file_path]
+        _run_opener_command(command)
     elif sys.platform.startswith("win"):
-        command = ["cmd", "/c", "start", "", file_path]
+        startfile = getattr(os, "startfile", None)
+        if startfile is None:
+            raise RuntimeError("Windows opener is not available")
+        startfile(file_path)
     else:
         raise RuntimeError(f"Unsupported platform: {sys.platform}")
-
-    subprocess.run(command, check=True)
 
 
 def _compact_snippet(text: str) -> str:
@@ -62,3 +69,14 @@ def _compact_snippet(text: str) -> str:
     if len(snippet) <= 160:
         return snippet
     return f"{snippet[:157]}..."
+
+
+def _run_opener_command(command: list[str]) -> None:
+    try:
+        subprocess.run(command, check=True)
+    except FileNotFoundError as exc:
+        raise RuntimeError(f"Platform opener not found: {command[0]}") from exc
+    except subprocess.CalledProcessError as exc:
+        raise RuntimeError(
+            f"Platform opener failed with exit code {exc.returncode}: {command[0]}"
+        ) from exc

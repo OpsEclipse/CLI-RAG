@@ -55,13 +55,14 @@ def test_get_last_search_target_raises_for_missing_result_number(tmp_path):
 @pytest.mark.parametrize(
     ("platform", "expected"),
     [
-        ("darwin", ["open", "/tmp/week-01.pptx"]),
-        ("linux", ["xdg-open", "/tmp/week-01.pptx"]),
-        ("win32", ["cmd", "/c", "start", "", "/tmp/week-01.pptx"]),
+        ("darwin", "open"),
+        ("linux", "xdg-open"),
     ],
 )
-def test_open_file_chooses_platform_command(monkeypatch, platform, expected):
+def test_open_file_chooses_platform_command(monkeypatch, tmp_path, platform, expected):
     calls = []
+    source_path = tmp_path / "week-01.pptx"
+    source_path.write_text("slides")
 
     def fake_run(command, check):
         calls.append((command, check))
@@ -69,12 +70,51 @@ def test_open_file_chooses_platform_command(monkeypatch, platform, expected):
     monkeypatch.setattr("sys.platform", platform)
     monkeypatch.setattr("subprocess.run", fake_run)
 
-    open_file(Path("/tmp/week-01.pptx"))
+    open_file(source_path)
 
-    assert calls == [(expected, True)]
+    assert calls == [([expected, str(source_path)], True)]
+
+
+def test_open_file_raises_before_platform_opener_when_source_missing(
+    monkeypatch, tmp_path
+):
+    calls = []
+    missing_path = tmp_path / "missing.pptx"
+
+    def fake_run(command, check):
+        calls.append((command, check))
+
+    monkeypatch.setattr("sys.platform", "darwin")
+    monkeypatch.setattr("subprocess.run", fake_run)
+
+    with pytest.raises(FileNotFoundError, match="Source file does not exist"):
+        open_file(missing_path)
+
+    assert calls == []
+
+
+def test_open_file_uses_startfile_on_windows(monkeypatch, tmp_path):
+    calls = []
+    source_path = tmp_path / "week & 01.pptx"
+    source_path.write_text("slides")
+
+    def fake_startfile(path):
+        calls.append(path)
+
+    def fake_run(command, check):
+        raise AssertionError("subprocess.run should not be used on Windows")
+
+    monkeypatch.setattr("sys.platform", "win32")
+    monkeypatch.setattr("os.startfile", fake_startfile, raising=False)
+    monkeypatch.setattr("subprocess.run", fake_run)
+
+    open_file(source_path)
+
+    assert calls == [str(source_path)]
 
 
 def test_open_file_raises_for_unknown_platform(monkeypatch):
+    monkeypatch.setattr(Path, "exists", lambda self: True)
     monkeypatch.setattr("sys.platform", "plan9")
 
     with pytest.raises(RuntimeError, match="Unsupported platform"):
@@ -113,3 +153,29 @@ def test_cli_open_calls_opener_and_prints_target(monkeypatch, tmp_path):
     assert "Go to: S1" in result.stdout
     assert "Topic: Elasticity" in result.stdout
     assert 'Match: "Price elasticity"' in result.stdout
+
+
+def test_cli_open_missing_source_exits_cleanly(monkeypatch, tmp_path):
+    import crag.config
+    import crag.openers
+
+    target = OpenTarget(
+        file_path=tmp_path / "missing.pptx",
+        file_name="missing.pptx",
+        location="S1",
+        topic="Elasticity",
+        snippet="Price elasticity",
+    )
+
+    def fake_get_last_search_target(conn, result_number):
+        return target
+
+    monkeypatch.setattr(crag.config, "DB_PATH", tmp_path / "crag.db")
+    monkeypatch.setattr(crag.openers, "get_last_search_target", fake_get_last_search_target)
+
+    result = CliRunner().invoke(app, ["open", "1"])
+
+    assert result.exit_code == 1
+    assert "Source file does not exist" in result.stderr
+    assert "Traceback" not in result.stdout
+    assert "Traceback" not in result.stderr
