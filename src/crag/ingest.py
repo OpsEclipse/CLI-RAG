@@ -3,10 +3,26 @@ from __future__ import annotations
 import hashlib
 import json
 from pathlib import Path
+import re
 import sqlite3
 from typing import Any
 
 from crag.config import RAW_OCR_DIR, SUPPORTED_EXTENSIONS
+
+
+MAX_RAW_OCR_STEM_LENGTH = 60
+
+
+def _payload_digest(payload: dict[str, Any]) -> str:
+    encoded = json.dumps(
+        payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()[:12]
+
+
+def _safe_stem(path: Path) -> str:
+    stem = re.sub(r"[^A-Za-z0-9._-]+", "-", path.stem).strip(".-_")
+    return (stem or "document")[:MAX_RAW_OCR_STEM_LENGTH]
 
 
 def scan_supported_files(root: Path) -> list[Path]:
@@ -53,8 +69,10 @@ def write_raw_ocr(
     path: Path, payload: dict[str, Any], raw_dir: Path = RAW_OCR_DIR
 ) -> Path:
     raw_dir.mkdir(parents=True, exist_ok=True)
-    digest = hashlib.sha256(str(path.resolve()).encode("utf-8")).hexdigest()[:12]
-    raw_path = raw_dir / f"{path.stem}-{digest}.json"
+    source_digest = hashlib.sha256(str(path.resolve()).encode("utf-8")).hexdigest()[:12]
+    raw_path = (
+        raw_dir / f"{_safe_stem(path)}-{source_digest}-{_payload_digest(payload)}.json"
+    )
     raw_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
     return raw_path
 

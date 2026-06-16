@@ -11,6 +11,9 @@ def ingest(path: Path) -> None:
     """Parse files and add them to the local index."""
     import os
 
+    if not path.exists():
+        raise typer.BadParameter(f"Input path does not exist: {path}")
+
     from crag.config import RAW_OCR_DIR
     from crag.db import connect, ensure_app_dirs, init_db
     from crag.ingest import ingest_file, scan_supported_files
@@ -25,10 +28,11 @@ def ingest(path: Path) -> None:
     conn = connect()
     init_db(conn)
     client = MistralOcrClient(api_key)
+    files = scan_supported_files(path)
     ready = 0
     failed = 0
 
-    for file_path in scan_supported_files(path):
+    for file_path in files:
         try:
             ingest_file(conn, file_path, client, RAW_OCR_DIR)
             ready += 1
@@ -44,6 +48,8 @@ def ingest(path: Path) -> None:
     typer.echo(
         f"Ingested {ready} file(s). Failed {failed}. Skipped unsupported files automatically."
     )
+    if files and ready == 0 and failed > 0:
+        raise typer.Exit(1)
 
 
 @app.command()
