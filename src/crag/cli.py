@@ -46,9 +46,15 @@ def list_documents(errors: bool = False) -> None:
 
 
 @app.command()
-def delete(target: Optional[str] = None, all: bool = False, yes: bool = False) -> None:
+def delete(
+    target: Optional[str] = typer.Argument(None),
+    all_documents: bool = typer.Option(False, "--all"),
+    yes: bool = False,
+) -> None:
     """Delete indexed files from the local index."""
-    typer.echo(f"Delete command registered: target={target} all={all} yes={yes}")
+    typer.echo(
+        f"Delete command registered: target={target} all={all_documents} yes={yes}"
+    )
 
 
 if __name__ == "__main__":
