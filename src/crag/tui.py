@@ -67,6 +67,10 @@ class CragTuiApp(App[None]):
         Binding("enter", "open_selected", "Open"),
         Binding("o", "open_selected", "Open"),
         Binding("r", "run_search", "Run"),
+        Binding("ctrl+f", "focus_file", "File", show=False, priority=True),
+        Binding("ctrl+k", "cycle_mode", "Mode", show=False, priority=True),
+        Binding("ctrl+o", "open_selected", "Open", show=False, priority=True),
+        Binding("ctrl+r", "run_search", "Run", show=False, priority=True),
     ]
 
     def __init__(self, db_path: str | None = None) -> None:
@@ -123,9 +127,7 @@ class CragTuiApp(App[None]):
 
     def action_cycle_mode(self) -> None:
         mode_select = self.query_one("#mode-select", Select)
-        modes = ["hybrid", "keyword", "semantic"]
-        current = str(mode_select.value)
-        next_mode = modes[(modes.index(current) + 1) % len(modes)]
+        next_mode = self._next_search_mode(mode_select.value)
         mode_select.value = next_mode
         self._set_status(f"Mode: {next_mode}")
 
@@ -247,6 +249,13 @@ class CragTuiApp(App[None]):
         if mode not in {"hybrid", "keyword", "semantic"}:
             return "hybrid"
         return mode  # type: ignore[return-value]
+
+    def _next_search_mode(self, current_value: object) -> SearchMode:
+        modes: list[SearchMode] = ["hybrid", "keyword", "semantic"]
+        current = str(current_value)
+        if current not in modes:
+            return "hybrid"
+        return modes[(modes.index(current) + 1) % len(modes)]
 
     def _set_status(self, message: str) -> None:
         self.query_one("#status", Static).update(message)

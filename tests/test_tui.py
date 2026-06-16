@@ -131,3 +131,30 @@ def test_tui_hybrid_search_loads_embedding_model_local_only(tmp_path, monkeypatc
             assert len(app.results) == 1
 
     asyncio.run(run_test())
+
+
+def test_tui_control_shortcuts_work_from_search_input(tmp_path):
+    async def run_test():
+        app = CragTuiApp(db_path=tmp_path / "crag.db")
+        async with app.run_test() as pilot:
+            search = app.query_one("#search-query", Input)
+            mode = app.query_one("#mode-select", Select)
+            search.focus()
+
+            await pilot.press("ctrl+k")
+            await pilot.pause()
+
+            assert search.has_focus
+            assert search.value == ""
+            assert mode.value == "keyword"
+
+    asyncio.run(run_test())
+
+
+def test_tui_mode_cycle_recovers_from_unexpected_select_value(tmp_path, monkeypatch):
+    async def run_test():
+        app = CragTuiApp(db_path=tmp_path / "crag.db")
+        async with app.run_test():
+            assert app._next_search_mode("bad-value") == "hybrid"
+
+    asyncio.run(run_test())
