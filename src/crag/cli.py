@@ -3,8 +3,62 @@ from typing import Optional
 
 import typer
 from rich.console import Console
+from rich.table import Table
 
 app = typer.Typer(no_args_is_help=True)
+
+
+@app.command(name="help")
+def help_command() -> None:
+    """Show CRAG exam workflow help."""
+    console = Console()
+    commands = Table(title="CRAG Local Search", show_header=True, header_style="bold")
+    commands.add_column("Command")
+    commands.add_column("Use")
+    commands.add_column("Example")
+    commands.add_row(
+        "crag ingest",
+        "Parse files and build the local index.",
+        'crag ingest "/path/SYDE 161"',
+    )
+    commands.add_row(
+        "crag search",
+        "Search locally. Hybrid is the default.",
+        'crag search "price elasticity"',
+    )
+    commands.add_row(
+        "crag search --keyword",
+        "Use exact keyword search only.",
+        'crag search "supply curve" --keyword',
+    )
+    commands.add_row(
+        "crag search --semantic",
+        "Use meaning-based embedding search only.",
+        'crag search "what shifts demand" --semantic',
+    )
+    commands.add_row(
+        "crag open",
+        "Open a file from the most recent search.",
+        "crag open 1",
+    )
+    commands.add_row(
+        "crag list",
+        "Show files currently in the index.",
+        "crag list",
+    )
+    commands.add_row(
+        "crag status",
+        "Show index counts and semantic index status.",
+        "crag status",
+    )
+    commands.add_row(
+        "crag delete",
+        "Remove one file or the whole index.",
+        "crag delete 2",
+    )
+    console.print(commands)
+    console.print("Use quotes around paths or searches that contain spaces.")
+    console.print("During the exam, use search, open, list, status, and delete offline.")
 
 
 @app.command()

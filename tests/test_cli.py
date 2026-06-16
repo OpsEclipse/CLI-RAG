@@ -18,6 +18,21 @@ def test_cli_help_shows_commands():
     assert "delete" in result.stdout
 
 
+def test_crag_help_shows_exam_workflow_commands():
+    runner = CliRunner()
+
+    result = runner.invoke(app, ["help"])
+
+    assert result.exit_code == 0
+    assert "CRAG Local Search" in result.stdout
+    assert "crag ingest" in result.stdout
+    assert "crag search" in result.stdout
+    assert "crag open 1" in result.stdout
+    assert "--keyword" in result.stdout
+    assert "--semantic" in result.stdout
+    assert "crag delete" in result.stdout
+
+
 def test_delete_missing_positional_target_prints_message(tmp_path, monkeypatch):
     db_path = tmp_path / "crag.db"
     conn = connect(db_path)
