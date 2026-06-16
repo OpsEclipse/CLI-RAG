@@ -166,12 +166,43 @@ def list_documents(errors: bool = False) -> None:
 def delete(
     target: Optional[str] = typer.Argument(None),
     all_documents: bool = typer.Option(False, "--all"),
-    yes: bool = False,
+    yes: bool = typer.Option(False, "--yes", "-y"),
 ) -> None:
     """Delete indexed files from the local index."""
-    typer.echo(
-        f"Delete command registered: target={target} all={all_documents} yes={yes}"
+    from crag import config
+    from crag.db import connect, init_db
+    from crag.delete import (
+        clear_index,
+        delete_document_by_list_row,
+        delete_document_by_path,
     )
+
+    conn = connect(config.DB_PATH)
+    init_db(conn)
+
+    if all_documents:
+        if target is not None:
+            typer.echo("Choose either --all or a target, not both.")
+            raise typer.Exit(2)
+        if not yes and not typer.confirm("Delete all indexed files?"):
+            raise typer.Exit(1)
+        clear_index(conn)
+        typer.echo("Deleted indexed file. Original source file was not removed.")
+        return
+
+    if target is None:
+        typer.echo("Pass a row number, a file path, or --all.")
+        raise typer.Exit(2)
+
+    if target.isdecimal():
+        deleted = delete_document_by_list_row(conn, int(target))
+    else:
+        deleted = delete_document_by_path(conn, target)
+
+    if deleted:
+        typer.echo("Deleted indexed file. Original source file was not removed.")
+    else:
+        typer.echo("No matching indexed file found.")
 
 
 if __name__ == "__main__":

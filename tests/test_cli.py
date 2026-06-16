@@ -1,6 +1,7 @@
 from typer.testing import CliRunner
 
 from crag.cli import app
+from crag.db import connect, init_db
 
 
 def test_cli_help_shows_commands():
@@ -17,20 +18,29 @@ def test_cli_help_shows_commands():
     assert "delete" in result.stdout
 
 
-def test_delete_accepts_positional_target():
+def test_delete_missing_positional_target_prints_message(tmp_path, monkeypatch):
+    db_path = tmp_path / "crag.db"
+    conn = connect(db_path)
+    init_db(conn)
+    conn.close()
+    monkeypatch.setattr("crag.config.DB_PATH", db_path)
     runner = CliRunner()
 
     result = runner.invoke(app, ["delete", "3"])
 
     assert result.exit_code == 0
-    assert "target=3" in result.stdout
+    assert "No matching indexed file found." in result.stdout
 
 
-def test_delete_accepts_all_flag_with_confirmation():
+def test_delete_accepts_all_flag_with_confirmation(tmp_path, monkeypatch):
+    db_path = tmp_path / "crag.db"
+    conn = connect(db_path)
+    init_db(conn)
+    conn.close()
+    monkeypatch.setattr("crag.config.DB_PATH", db_path)
     runner = CliRunner()
 
     result = runner.invoke(app, ["delete", "--all", "--yes"])
 
     assert result.exit_code == 0
-    assert "all=True" in result.stdout
-    assert "yes=True" in result.stdout
+    assert "Deleted indexed file. Original source file was not removed." in result.stdout
