@@ -198,6 +198,10 @@ def delete(
         deleted = delete_document_by_list_row(conn, int(target))
     else:
         deleted = delete_document_by_path(conn, target)
+        if not deleted:
+            resolved_target = str(Path(target).expanduser().resolve())
+            if resolved_target != target:
+                deleted = delete_document_by_path(conn, resolved_target)
 
     if deleted:
         typer.echo("Deleted indexed file. Original source file was not removed.")

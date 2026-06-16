@@ -208,6 +208,33 @@ def test_cli_delete_by_path_deletes_path(tmp_path, monkeypatch):
     assert source.exists()
 
 
+def test_cli_delete_by_relative_path_matches_stored_absolute_path(
+    tmp_path, monkeypatch
+):
+    db_path = tmp_path / "crag.db"
+    course_dir = tmp_path / "course"
+    course_dir.mkdir()
+    source = course_dir / "week-01.pptx"
+    source.write_text("original file")
+    conn = connect(db_path)
+    init_db(conn)
+    seed_document(conn, path=str(source.resolve()))
+    conn.close()
+    monkeypatch.setattr("crag.config.DB_PATH", db_path)
+    monkeypatch.chdir(course_dir)
+    runner = CliRunner()
+
+    result = runner.invoke(app, ["delete", source.name])
+
+    conn = connect(db_path)
+    document_count = conn.execute("SELECT COUNT(*) FROM documents").fetchone()[0]
+    conn.close()
+    assert result.exit_code == 0
+    assert "Deleted indexed file. Original source file was not removed." in result.stdout
+    assert document_count == 0
+    assert source.exists()
+
+
 def test_cli_delete_missing_target_prints_message(tmp_path, monkeypatch):
     db_path = tmp_path / "crag.db"
     conn = connect(db_path)
