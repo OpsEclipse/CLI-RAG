@@ -48,7 +48,7 @@ def ingest(path: Path) -> None:
     typer.echo(
         f"Ingested {ready} file(s). Failed {failed}. Skipped unsupported files automatically."
     )
-    if files and ready == 0 and failed > 0:
+    if failed > 0:
         raise typer.Exit(1)
 
 

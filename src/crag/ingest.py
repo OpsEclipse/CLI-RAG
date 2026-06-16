@@ -94,57 +94,68 @@ def ingest_file(
 ) -> int:
     source_path = path.resolve()
     payload = ocr_client.parse_file(path)
-    raw_path = write_raw_ocr(source_path, payload, raw_dir)
     path_text = str(source_path)
-
-    old_chunk_ids = [
-        int(row["id"])
+    existing_raw_paths = {
+        str(row["raw_ocr_path"])
         for row in conn.execute(
-            """
-            SELECT chunks.id
-            FROM chunks
-            JOIN documents ON documents.id = chunks.document_id
-            WHERE documents.path = ?
-            """,
+            "SELECT raw_ocr_path FROM documents WHERE path = ? AND raw_ocr_path IS NOT NULL",
             (path_text,),
         )
-    ]
-    for chunk_id in old_chunk_ids:
-        conn.execute("DELETE FROM chunk_fts WHERE rowid = ?", (chunk_id,))
-    conn.execute("DELETE FROM documents WHERE path = ?", (path_text,))
+    }
+    raw_path = write_raw_ocr(source_path, payload, raw_dir)
+    try:
+        old_chunk_ids = [
+            int(row["id"])
+            for row in conn.execute(
+                """
+                SELECT chunks.id
+                FROM chunks
+                JOIN documents ON documents.id = chunks.document_id
+                WHERE documents.path = ?
+                """,
+                (path_text,),
+            )
+        ]
+        for chunk_id in old_chunk_ids:
+            conn.execute("DELETE FROM chunk_fts WHERE rowid = ?", (chunk_id,))
+        conn.execute("DELETE FROM documents WHERE path = ?", (path_text,))
 
-    document_cursor = conn.execute(
-        """
-        INSERT INTO documents(path, file_name, file_type, raw_ocr_path, status)
-        VALUES (?, ?, ?, ?, 'ready')
-        """,
-        (path_text, path.name, path.suffix.lower().lstrip("."), str(raw_path)),
-    )
-    document_id = int(document_cursor.lastrowid)
-    kind = item_kind_for(path)
-
-    for page in pages_from_ocr(payload):
-        item_number = int(page.get("index", 0)) + 1
-        text = str(page.get("markdown", "")).strip()
-        topic = extract_topic(text)
-        item_cursor = conn.execute(
+        document_cursor = conn.execute(
             """
-            INSERT INTO items(document_id, item_number, item_kind, topic, text)
-            VALUES (?, ?, ?, ?, ?)
+            INSERT INTO documents(path, file_name, file_type, raw_ocr_path, status)
+            VALUES (?, ?, ?, ?, 'ready')
             """,
-            (document_id, item_number, kind, topic, text),
+            (path_text, path.name, path.suffix.lower().lstrip("."), str(raw_path)),
         )
-        item_id = int(item_cursor.lastrowid)
-        location = location_for(kind, item_number)
-        chunk_cursor = conn.execute(
-            """
-            INSERT INTO chunks(document_id, item_id, chunk_index, text, topic, location)
-            VALUES (?, ?, 0, ?, ?, ?)
-            """,
-            (document_id, item_id, text, topic, location),
-        )
-        chunk_id = int(chunk_cursor.lastrowid)
-        insert_fts(conn, chunk_id, text, topic, path.name)
+        document_id = int(document_cursor.lastrowid)
+        kind = item_kind_for(path)
 
-    conn.commit()
-    return document_id
+        for page in pages_from_ocr(payload):
+            item_number = int(page.get("index", 0)) + 1
+            text = str(page.get("markdown", "")).strip()
+            topic = extract_topic(text)
+            item_cursor = conn.execute(
+                """
+                INSERT INTO items(document_id, item_number, item_kind, topic, text)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (document_id, item_number, kind, topic, text),
+            )
+            item_id = int(item_cursor.lastrowid)
+            location = location_for(kind, item_number)
+            chunk_cursor = conn.execute(
+                """
+                INSERT INTO chunks(document_id, item_id, chunk_index, text, topic, location)
+                VALUES (?, ?, 0, ?, ?, ?)
+                """,
+                (document_id, item_id, text, topic, location),
+            )
+            chunk_id = int(chunk_cursor.lastrowid)
+            insert_fts(conn, chunk_id, text, topic, path.name)
+
+        conn.commit()
+        return document_id
+    except Exception:
+        if str(raw_path) not in existing_raw_paths:
+            raw_path.unlink(missing_ok=True)
+        raise

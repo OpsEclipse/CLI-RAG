@@ -151,6 +151,7 @@ def test_failed_reingest_does_not_overwrite_existing_raw_ocr(
     conn.rollback()
 
     assert existing_raw_path.read_text() == existing_raw_text
+    assert len(list(raw_dir.glob("*.json"))) == 1
 
 
 def test_ingest_cli_requires_mistral_api_key(monkeypatch, temp_course_dir):
@@ -203,4 +204,54 @@ def test_ingest_cli_exits_nonzero_when_all_supported_files_fail(
 
     assert result.exit_code == 1
     assert "Ingested 0 file(s). Failed 1." in result.output
+    assert error_count == 1
+
+
+def test_ingest_cli_exits_nonzero_when_any_supported_file_fails(
+    monkeypatch, tmp_path, temp_course_dir
+):
+    import crag.config as config_module
+    import crag.db as db_module
+
+    db_path = tmp_path / "crag.db"
+    raw_dir = tmp_path / "raw"
+    conn = connect(db_path)
+    success = temp_course_dir / "week-01.pptx"
+    failure = temp_course_dir / "week-02.pptx"
+    success.write_text("fake")
+    failure.write_text("fake")
+
+    class PartlyFailingMistralOcrClient:
+        def __init__(self, api_key: str):
+            pass
+
+        def parse_file(self, path: Path) -> dict:
+            if path.name == "week-02.pptx":
+                raise RuntimeError("OCR failed")
+            return {
+                "pages": [
+                    {
+                        "index": 0,
+                        "markdown": "# Successful File\n\nThis file should be ingested.",
+                    }
+                ]
+            }
+
+    fake_ocr_module = types.SimpleNamespace(
+        MistralOcrClient=PartlyFailingMistralOcrClient
+    )
+    monkeypatch.setenv("MISTRAL_API_KEY", "test-key")
+    monkeypatch.setitem(sys.modules, "crag.ocr", fake_ocr_module)
+    monkeypatch.setattr(config_module, "RAW_OCR_DIR", raw_dir)
+    monkeypatch.setattr(db_module, "connect", lambda: conn)
+    monkeypatch.setattr(db_module, "ensure_app_dirs", lambda: None)
+    runner = CliRunner()
+
+    result = runner.invoke(app, ["ingest", str(temp_course_dir)])
+    document_count = conn.execute("SELECT COUNT(*) FROM documents").fetchone()[0]
+    error_count = conn.execute("SELECT COUNT(*) FROM ingest_errors").fetchone()[0]
+
+    assert result.exit_code == 1
+    assert "Ingested 1 file(s). Failed 1." in result.output
+    assert document_count == 1
     assert error_count == 1
