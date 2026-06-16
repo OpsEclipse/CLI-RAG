@@ -115,7 +115,22 @@ def search(
 @app.command(name="open")
 def open_result(result_number: int) -> None:
     """Open a source file from the most recent search."""
-    typer.echo(f"Open command registered for result: {result_number}")
+    from crag import config, openers
+    from crag.db import connect, init_db
+
+    conn = connect(config.DB_PATH)
+    init_db(conn)
+    try:
+        target = openers.get_last_search_target(conn, result_number)
+    except ValueError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(1) from exc
+
+    openers.open_file(target.file_path)
+    typer.echo(f"Opened: {target.file_path}")
+    typer.echo(f"Go to: {target.location}")
+    typer.echo(f"Topic: {target.topic}")
+    typer.echo(f'Match: "{target.snippet}"')
 
 
 @app.command()
