@@ -142,6 +142,27 @@ def test_render_document_list_errors_renders_errors_without_storing_rows(tmp_pat
     assert rows == []
 
 
+def test_render_document_list_errors_clears_previous_list_results(tmp_path):
+    conn = connect(tmp_path / "crag.db")
+    init_db(conn)
+    seed_document(conn)
+    console = Console(record=True, width=120)
+    render_document_list(console, conn)
+    assert conn.execute("SELECT COUNT(*) FROM last_list_results").fetchone()[0] == 1
+    conn.execute(
+        """
+        INSERT INTO ingest_errors(path, error_type, message)
+        VALUES ('/tmp/broken.pptx', 'RuntimeError', 'OCR failed')
+        """
+    )
+    conn.commit()
+
+    render_document_list(console, conn, errors=True)
+
+    rows = conn.execute("SELECT * FROM last_list_results").fetchall()
+    assert rows == []
+
+
 def test_cli_status_outputs_index_status(tmp_path, monkeypatch):
     db_path = tmp_path / "crag.db"
     conn = connect(db_path)

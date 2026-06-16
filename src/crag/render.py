@@ -55,6 +55,9 @@ def render_status(console: Console, conn: sqlite3.Connection) -> None:
 def render_document_list(
     console: Console, conn: sqlite3.Connection, errors: bool = False
 ) -> None:
+    conn.execute("DELETE FROM last_list_results")
+    conn.commit()
+
     if errors:
         _render_error_list(console, conn)
         return
@@ -75,7 +78,6 @@ def render_document_list(
         """
     ).fetchall()
 
-    conn.execute("DELETE FROM last_list_results")
     conn.executemany(
         """
         INSERT INTO last_list_results(row_number, document_id)
