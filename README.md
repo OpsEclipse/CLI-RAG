@@ -35,6 +35,8 @@ It sends supported files to Mistral OCR. It also downloads the local embedding m
 
 The embedding model is `BAAI/bge-small-en-v1.5`.
 
+PDFs are split into semantic snippets during ingestion. Semantic snippets are smaller text chunks grouped by meaning, so search embeds and matches parts of pages instead of whole pages.
+
 Supported file extensions:
 
 - `.pdf`

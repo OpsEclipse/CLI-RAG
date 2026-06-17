@@ -52,6 +52,35 @@ class FakeEmbeddingModel:
         return [np.array([1.0, 0.0], dtype=np.float32) for _ in texts]
 
 
+class TopicEmbeddingModel:
+    def __init__(self):
+        self.encoded_texts: list[list[str]] = []
+
+    def encode(self, texts, normalize_embeddings=True):
+        assert normalize_embeddings is True
+        self.encoded_texts.append(list(texts))
+        vectors = []
+        for text in texts:
+            lowered = text.lower()
+            if "demand" in lowered or "price" in lowered:
+                vectors.append(np.array([1.0, 0.0], dtype=np.float32))
+            else:
+                vectors.append(np.array([0.0, 1.0], dtype=np.float32))
+        return vectors
+
+
+class BorderlineEmbeddingModel:
+    def encode(self, texts, normalize_embeddings=True):
+        assert normalize_embeddings is True
+        vectors = []
+        for text in texts:
+            if "baseline" in text:
+                vectors.append(np.array([1.0, 0.0], dtype=np.float32))
+            else:
+                vectors.append(np.array([0.8, 0.6], dtype=np.float32))
+        return vectors
+
+
 def test_mistral_ocr_client_supports_client_module_import(monkeypatch):
     class FakeMistral:
         def __init__(self, api_key: str):
@@ -150,6 +179,128 @@ def test_ingest_file_can_store_embeddings(tmp_path, temp_course_dir):
             deserialize_vector(row["vector"], expected_dimensions=2),
             np.array([1.0, 0.0], dtype=np.float32),
         )
+
+
+def test_pdf_ingest_semantically_chunks_pages_before_embedding(tmp_path, temp_course_dir):
+    db_path = tmp_path / "crag.db"
+    raw_dir = tmp_path / "raw"
+    conn = connect(db_path)
+    init_db(conn)
+    source = temp_course_dir / "week-01.pdf"
+    source.write_text("fake")
+    payload = {
+        "pages": [
+            {
+                "index": 0,
+                "markdown": (
+                    "Demand curves show how quantity demanded changes with price.\n\n"
+                    "Demand schedules list quantities at each price.\n\n"
+                    "Photosynthesis uses sunlight in chloroplasts.\n\n"
+                    "Plants convert carbon dioxide into sugar."
+                ),
+            }
+        ]
+    }
+    embedding_model = TopicEmbeddingModel()
+
+    ingest_file(
+        conn,
+        source,
+        PayloadOcrClient(payload),
+        raw_dir,
+        embedding_model=embedding_model,
+    )
+
+    chunks = conn.execute(
+        "SELECT chunk_index, text, location FROM chunks ORDER BY chunk_index"
+    ).fetchall()
+    embeddings = conn.execute("SELECT COUNT(*) FROM embeddings").fetchone()[0]
+
+    assert [row["chunk_index"] for row in chunks] == [0, 1]
+    assert [row["location"] for row in chunks] == ["P1.1", "P1.2"]
+    assert chunks[0]["text"] == (
+        "Demand curves show how quantity demanded changes with price.\n\n"
+        "Demand schedules list quantities at each price."
+    )
+    assert chunks[1]["text"] == (
+        "Photosynthesis uses sunlight in chloroplasts.\n\n"
+        "Plants convert carbon dioxide into sugar."
+    )
+    assert embeddings == 2
+    assert embedding_model.encoded_texts[-1] == [row["text"] for row in chunks]
+
+
+def test_pdf_ingest_semantically_chunks_single_paragraph_pages(
+    tmp_path, temp_course_dir
+):
+    db_path = tmp_path / "crag.db"
+    raw_dir = tmp_path / "raw"
+    conn = connect(db_path)
+    init_db(conn)
+    source = temp_course_dir / "week-02.pdf"
+    source.write_text("fake")
+    payload = {
+        "pages": [
+            {
+                "index": 0,
+                "markdown": (
+                    "Demand curves show how quantity demanded changes with price. "
+                    "Demand schedules list quantities at each price. "
+                    "Photosynthesis uses sunlight in chloroplasts. "
+                    "Plants convert carbon dioxide into sugar."
+                ),
+            }
+        ]
+    }
+
+    ingest_file(
+        conn,
+        source,
+        PayloadOcrClient(payload),
+        raw_dir,
+        embedding_model=TopicEmbeddingModel(),
+    )
+
+    chunks = conn.execute(
+        "SELECT chunk_index, text, location FROM chunks ORDER BY chunk_index"
+    ).fetchall()
+
+    assert [row["chunk_index"] for row in chunks] == [0, 1]
+    assert [row["location"] for row in chunks] == ["P1.1", "P1.2"]
+    assert "Demand curves" in chunks[0]["text"]
+    assert "Photosynthesis" in chunks[1]["text"]
+
+
+def test_pdf_ingest_splits_borderline_similar_blocks(tmp_path, temp_course_dir):
+    db_path = tmp_path / "crag.db"
+    raw_dir = tmp_path / "raw"
+    conn = connect(db_path)
+    init_db(conn)
+    source = temp_course_dir / "week-03.pdf"
+    source.write_text("fake")
+    payload = {
+        "pages": [
+            {
+                "index": 0,
+                "markdown": "baseline demand overview.\n\nnearby demand detail.",
+            }
+        ]
+    }
+
+    ingest_file(
+        conn,
+        source,
+        PayloadOcrClient(payload),
+        raw_dir,
+        embedding_model=BorderlineEmbeddingModel(),
+    )
+
+    chunks = conn.execute(
+        "SELECT chunk_index, text, location FROM chunks ORDER BY chunk_index"
+    ).fetchall()
+
+    assert [row["chunk_index"] for row in chunks] == [0, 1]
+    assert [row["location"] for row in chunks] == ["P1.1", "P1.2"]
 
 
 def test_failed_embedding_insert_rolls_back_ingest_rows(tmp_path, temp_course_dir):

@@ -37,6 +37,17 @@ def test_crag_help_shows_exam_workflow_commands():
     assert "crag delete" in result.stdout
 
 
+def test_crag_help_uses_uniform_table_borders():
+    runner = CliRunner()
+
+    result = runner.invoke(app, ["help"])
+
+    assert result.exit_code == 0
+    assert "┡" not in result.stdout
+    assert "┩" not in result.stdout
+    assert "━" not in result.stdout
+
+
 def test_cli_tui_runs_tui(monkeypatch):
     runner = CliRunner()
     calls = []

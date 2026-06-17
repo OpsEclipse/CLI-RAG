@@ -8,11 +8,15 @@ import sqlite3
 from typing import Any
 
 from crag.config import EMBEDDING_MODEL_NAME, RAW_OCR_DIR, SUPPORTED_EXTENSIONS
-from crag.embeddings import embed_texts, serialize_vector
+from crag.embeddings import cosine_similarity, embed_texts, serialize_vector
 
 
 MAX_RAW_OCR_STEM_LENGTH = 60
 INGEST_SAVEPOINT = "crag_ingest_file"
+MAX_PDF_CHUNK_CHARS = 1400
+PDF_CHUNK_SIMILARITY_THRESHOLD = 0.82
+_MARKDOWN_BLOCK_RE = re.compile(r"\n\s*\n+")
+_SENTENCE_RE = re.compile(r"[^.!?]+(?:[.!?]+|$)")
 
 
 def _payload_digest(payload: dict[str, Any]) -> str:
@@ -60,11 +64,79 @@ def location_for(kind: str, number: int) -> str:
     return f"{prefix}{number}"
 
 
+def chunk_location(
+    kind: str, item_number: int, chunk_index: int, chunk_count: int
+) -> str:
+    base_location = location_for(kind, item_number)
+    if kind == "page" and chunk_count > 1:
+        return f"{base_location}.{chunk_index + 1}"
+    return base_location
+
+
 def pages_from_ocr(payload: dict[str, Any]) -> list[dict[str, Any]]:
     pages = payload.get("pages", [])
     if not isinstance(pages, list):
         return []
     return [page for page in pages if isinstance(page, dict)]
+
+
+def markdown_blocks(markdown: str) -> list[str]:
+    blocks = [
+        block.strip()
+        for block in _MARKDOWN_BLOCK_RE.split(markdown.strip())
+        if block.strip()
+    ]
+    if len(blocks) != 1:
+        return blocks
+
+    sentences = [
+        sentence.strip()
+        for sentence in _SENTENCE_RE.findall(blocks[0])
+        if sentence.strip()
+    ]
+    if len(sentences) > 1:
+        return sentences
+    return blocks
+
+
+def _would_exceed_chunk_limit(current_blocks: list[str], next_block: str) -> bool:
+    if not current_blocks:
+        return False
+    current_text = "\n\n".join(current_blocks)
+    return len(current_text) + len(next_block) + 2 > MAX_PDF_CHUNK_CHARS
+
+
+def semantic_pdf_chunks(markdown: str, embedding_model: Any | None) -> list[str]:
+    blocks = markdown_blocks(markdown)
+    if not blocks:
+        return [markdown]
+    if len(blocks) == 1:
+        return blocks
+    if embedding_model is None:
+        return blocks
+
+    vectors = embed_texts(embedding_model, blocks)
+    chunks: list[list[str]] = [[blocks[0]]]
+    previous_vector = vectors[0]
+
+    for block, vector in zip(blocks[1:], vectors[1:]):
+        similarity = cosine_similarity(previous_vector, vector)
+        if (
+            similarity >= PDF_CHUNK_SIMILARITY_THRESHOLD
+            and not _would_exceed_chunk_limit(chunks[-1], block)
+        ):
+            chunks[-1].append(block)
+        else:
+            chunks.append([block])
+        previous_vector = vector
+
+    return ["\n\n".join(chunk_blocks) for chunk_blocks in chunks]
+
+
+def chunks_for_item(path: Path, text: str, embedding_model: Any | None) -> list[str]:
+    if path.suffix.lower() == ".pdf":
+        return semantic_pdf_chunks(text, embedding_model)
+    return [text]
 
 
 def write_raw_ocr(
@@ -150,18 +222,22 @@ def ingest_file(
                 (document_id, item_number, kind, topic, text),
             )
             item_id = int(item_cursor.lastrowid)
-            location = location_for(kind, item_number)
-            chunk_cursor = conn.execute(
-                """
-                INSERT INTO chunks(document_id, item_id, chunk_index, text, topic, location)
-                VALUES (?, ?, 0, ?, ?, ?)
-                """,
-                (document_id, item_id, text, topic, location),
-            )
-            chunk_id = int(chunk_cursor.lastrowid)
-            insert_fts(conn, chunk_id, text, topic, path.name)
-            chunk_ids.append(chunk_id)
-            chunk_texts.append(text)
+            item_chunks = chunks_for_item(path, text, embedding_model)
+            for chunk_index, chunk_text in enumerate(item_chunks):
+                location = chunk_location(
+                    kind, item_number, chunk_index, len(item_chunks)
+                )
+                chunk_cursor = conn.execute(
+                    """
+                    INSERT INTO chunks(document_id, item_id, chunk_index, text, topic, location)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    """,
+                    (document_id, item_id, chunk_index, chunk_text, topic, location),
+                )
+                chunk_id = int(chunk_cursor.lastrowid)
+                insert_fts(conn, chunk_id, chunk_text, topic, path.name)
+                chunk_ids.append(chunk_id)
+                chunk_texts.append(chunk_text)
 
         if embedding_model is not None and chunk_texts:
             vectors = embed_texts(embedding_model, chunk_texts)

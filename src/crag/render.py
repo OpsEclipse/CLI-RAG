@@ -3,6 +3,7 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
+from rich import box
 from rich.console import Console
 from rich.table import Table
 
@@ -10,7 +11,7 @@ from crag.models import SearchResult
 
 
 def render_results(console: Console, title: str, results: list[SearchResult]) -> None:
-    table = Table(title=title)
+    table = Table(title=title, box=box.SQUARE)
     table.add_column("#", justify="right")
     table.add_column("File")
     table.add_column("Loc")
@@ -39,7 +40,7 @@ def render_status(console: Console, conn: sqlite3.Connection) -> None:
     embedding_count = conn.execute("SELECT COUNT(*) FROM embeddings").fetchone()[0]
     semantic_index = "Available" if embedding_count > 0 else "Unavailable"
 
-    table = Table(title="Index Status")
+    table = Table(title="Index Status", box=box.SQUARE)
     table.add_column("Field")
     table.add_column("Value")
     table.add_row("Documents", str(document_count))
@@ -87,7 +88,7 @@ def render_document_list(
     )
     conn.commit()
 
-    table = Table(title="Documents")
+    table = Table(title="Documents", box=box.SQUARE)
     table.add_column("#", justify="right")
     table.add_column("File")
     table.add_column("Type")
@@ -117,7 +118,7 @@ def _render_error_list(console: Console, conn: sqlite3.Connection) -> None:
         """
     ).fetchall()
 
-    table = Table(title="Ingest Errors")
+    table = Table(title="Ingest Errors", box=box.SQUARE)
     table.add_column("#", justify="right")
     table.add_column("File")
     table.add_column("Error")

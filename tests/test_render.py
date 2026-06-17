@@ -61,6 +61,29 @@ def test_render_results_outputs_table():
     assert "S1" in output
 
 
+def test_render_results_uses_uniform_table_borders():
+    console = Console(record=True, width=120)
+    results = [
+        SearchResult(
+            result_number=1,
+            chunk_id=10,
+            file_path=Path("/tmp/week-01.pptx"),
+            file_name="week-01.pptx",
+            location="S1",
+            topic="Elasticity",
+            snippet="Price elasticity measures responsiveness.",
+            score=0.92,
+        )
+    ]
+
+    render_results(console, "Hybrid Results", results)
+
+    output = console.export_text()
+    assert "┡" not in output
+    assert "┩" not in output
+    assert "━" not in output
+
+
 def test_render_status_outputs_counts_last_ingest_and_available_semantic_index(
     tmp_path,
 ):

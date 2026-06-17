@@ -2,6 +2,7 @@ from pathlib import Path
 from typing import Optional
 
 import typer
+from rich import box
 from rich.console import Console
 from rich.table import Table
 
@@ -12,7 +13,12 @@ app = typer.Typer(no_args_is_help=True)
 def help_command() -> None:
     """Show CRAG exam workflow help."""
     console = Console()
-    commands = Table(title="CRAG Local Search", show_header=True, header_style="bold")
+    commands = Table(
+        title="CRAG Local Search",
+        show_header=True,
+        header_style="bold",
+        box=box.SQUARE,
+    )
     commands.add_column("Command")
     commands.add_column("Use")
     commands.add_column("Example")
