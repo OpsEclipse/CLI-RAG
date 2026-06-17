@@ -14,9 +14,11 @@ from crag.embeddings import cosine_similarity, embed_texts, serialize_vector
 MAX_RAW_OCR_STEM_LENGTH = 60
 INGEST_SAVEPOINT = "crag_ingest_file"
 MAX_PDF_CHUNK_CHARS = 1400
-PDF_CHUNK_SIMILARITY_THRESHOLD = 0.82
+MIN_PDF_CHUNK_CHARS = 30
+PDF_CHUNK_SIMILARITY_THRESHOLD = 0.72
 _MARKDOWN_BLOCK_RE = re.compile(r"\n\s*\n+")
 _SENTENCE_RE = re.compile(r"[^.!?]+(?:[.!?]+|$)")
+_REAL_WORD_RE = re.compile(r"[A-Za-z][A-Za-z'-]*")
 
 
 def _payload_digest(payload: dict[str, Any]) -> str:
@@ -106,14 +108,55 @@ def _would_exceed_chunk_limit(current_blocks: list[str], next_block: str) -> boo
     return len(current_text) + len(next_block) + 2 > MAX_PDF_CHUNK_CHARS
 
 
+def has_real_word(text: str) -> bool:
+    return any(len(word) >= 2 for word in _REAL_WORD_RE.findall(text))
+
+
+def is_noise_chunk(text: str) -> bool:
+    stripped = text.strip()
+    return not stripped or not has_real_word(stripped)
+
+
+def join_chunk_texts(chunks: list[str]) -> str:
+    return "\n\n".join(chunk.strip() for chunk in chunks if chunk.strip())
+
+
+def clean_pdf_chunks(chunks: list[str]) -> list[str]:
+    cleaned: list[str] = []
+    pending_prefix: list[str] = []
+
+    for chunk in chunks:
+        stripped = chunk.strip()
+        if is_noise_chunk(stripped):
+            continue
+        if len(stripped) < MIN_PDF_CHUNK_CHARS:
+            if cleaned:
+                cleaned[-1] = join_chunk_texts([cleaned[-1], stripped])
+            else:
+                pending_prefix.append(stripped)
+            continue
+        if pending_prefix:
+            stripped = join_chunk_texts([*pending_prefix, stripped])
+            pending_prefix = []
+        cleaned.append(stripped)
+
+    if pending_prefix:
+        if cleaned:
+            cleaned[-1] = join_chunk_texts([cleaned[-1], *pending_prefix])
+        else:
+            cleaned = pending_prefix
+
+    return cleaned
+
+
 def semantic_pdf_chunks(markdown: str, embedding_model: Any | None) -> list[str]:
     blocks = markdown_blocks(markdown)
     if not blocks:
-        return [markdown]
+        return []
     if len(blocks) == 1:
-        return blocks
+        return clean_pdf_chunks(blocks)
     if embedding_model is None:
-        return blocks
+        return clean_pdf_chunks(blocks)
 
     vectors = embed_texts(embedding_model, blocks)
     chunks: list[list[str]] = [[blocks[0]]]
@@ -130,7 +173,7 @@ def semantic_pdf_chunks(markdown: str, embedding_model: Any | None) -> list[str]
             chunks.append([block])
         previous_vector = vector
 
-    return ["\n\n".join(chunk_blocks) for chunk_blocks in chunks]
+    return clean_pdf_chunks(["\n\n".join(chunk_blocks) for chunk_blocks in chunks])
 
 
 def chunks_for_item(path: Path, text: str, embedding_model: Any | None) -> list[str]:

@@ -71,9 +71,11 @@ def render_document_list(
             documents.file_type,
             documents.updated_at,
             documents.status,
-            COUNT(items.id) AS item_count
+            COUNT(DISTINCT items.id) AS item_count,
+            COUNT(chunks.id) AS chunk_count
         FROM documents
         LEFT JOIN items ON items.document_id = documents.id
+        LEFT JOIN chunks ON chunks.item_id = items.id
         GROUP BY documents.id
         ORDER BY documents.file_name
         """
@@ -93,15 +95,22 @@ def render_document_list(
     table.add_column("File")
     table.add_column("Type")
     table.add_column("Items", justify="right")
+    table.add_column("Chunks", justify="right")
+    table.add_column("CPP", justify="right")
     table.add_column("Last Indexed")
     table.add_column("Status")
 
     for index, row in enumerate(rows, start=1):
+        item_count = int(row["item_count"])
+        chunk_count = int(row["chunk_count"])
+        chunks_per_page = chunk_count / item_count if item_count else 0.0
         table.add_row(
             str(index),
             str(row["file_name"]),
             str(row["file_type"]),
-            str(row["item_count"]),
+            str(item_count),
+            str(chunk_count),
+            f"{chunks_per_page:.1f}",
             str(row["updated_at"]),
             str(row["status"]),
         )

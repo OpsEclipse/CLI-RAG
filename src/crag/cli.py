@@ -103,12 +103,14 @@ def ingest(path: Path) -> None:
     conn = connect()
     init_db(conn)
     client = MistralOcrClient(api_key)
+    typer.echo("Loading embedding model...")
     embedding_model = load_model_for_download()
     files = scan_supported_files(path)
     ready = 0
     failed = 0
 
-    for file_path in files:
+    for index, file_path in enumerate(files, start=1):
+        typer.echo(f"[{index}/{len(files)}] Ingesting {file_path.name}...")
         try:
             ingest_file(
                 conn,
@@ -119,6 +121,7 @@ def ingest(path: Path) -> None:
             )
             conn.commit()
             ready += 1
+            typer.echo(f"Indexed {file_path.name}.")
         except Exception as exc:
             failed += 1
             conn.rollback()
@@ -127,6 +130,7 @@ def ingest(path: Path) -> None:
                 (str(file_path), type(exc).__name__, str(exc)),
             )
             conn.commit()
+            typer.echo(f"Failed {file_path.name}: {exc}")
 
     typer.echo(
         f"Ingested {ready} file(s). Failed {failed}. Skipped unsupported files automatically."
@@ -170,11 +174,14 @@ def search(
     if keyword:
         mode = "keyword"
         title = "Keyword Results"
+        typer.echo("Searching locally...")
         results = keyword_search(conn, query, top=top, file_filter=file)
     else:
         from crag.embeddings import embed_texts, load_model
 
+        typer.echo("Searching locally...")
         model = load_model(local_only=True)
+        typer.echo("Embedding query...")
         query_vector = embed_texts(model, [query])[0]
         if semantic:
             mode = "semantic"

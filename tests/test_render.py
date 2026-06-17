@@ -142,6 +142,37 @@ def test_render_document_list_stores_last_list_results(tmp_path):
     assert [tuple(row) for row in rows] == [(1, document_id)]
 
 
+def test_render_document_list_outputs_chunks_and_chunks_per_page(tmp_path):
+    conn = connect(tmp_path / "crag.db")
+    init_db(conn)
+    seed_document(conn)
+    document_id = conn.execute("SELECT id FROM documents").fetchone()["id"]
+    item_id = conn.execute("SELECT id FROM items").fetchone()["id"]
+    conn.execute(
+        """
+        INSERT INTO chunks(document_id, item_id, chunk_index, text, topic, location)
+        VALUES (?, ?, 1, 'More elasticity detail.', 'Elasticity', 'S1')
+        """,
+        (document_id, item_id),
+    )
+    conn.execute(
+        """
+        INSERT INTO chunks(document_id, item_id, chunk_index, text, topic, location)
+        VALUES (?, ?, 2, 'Final elasticity detail.', 'Elasticity', 'S1')
+        """,
+        (document_id, item_id),
+    )
+    conn.commit()
+    console = Console(record=True, width=120)
+
+    render_document_list(console, conn)
+
+    output = console.export_text()
+    assert "Chunks" in output
+    assert "CPP" in output
+    assert "3.0" in output
+
+
 def test_render_document_list_errors_renders_errors_without_storing_rows(tmp_path):
     conn = connect(tmp_path / "crag.db")
     init_db(conn)

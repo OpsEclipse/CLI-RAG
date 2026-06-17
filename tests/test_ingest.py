@@ -271,7 +271,7 @@ def test_pdf_ingest_semantically_chunks_single_paragraph_pages(
     assert "Photosynthesis" in chunks[1]["text"]
 
 
-def test_pdf_ingest_splits_borderline_similar_blocks(tmp_path, temp_course_dir):
+def test_pdf_ingest_merges_borderline_similar_blocks(tmp_path, temp_course_dir):
     db_path = tmp_path / "crag.db"
     raw_dir = tmp_path / "raw"
     conn = connect(db_path)
@@ -299,7 +299,86 @@ def test_pdf_ingest_splits_borderline_similar_blocks(tmp_path, temp_course_dir):
         "SELECT chunk_index, text, location FROM chunks ORDER BY chunk_index"
     ).fetchall()
 
-    assert [row["chunk_index"] for row in chunks] == [0, 1]
+    assert [row["chunk_index"] for row in chunks] == [0]
+    assert [row["location"] for row in chunks] == ["P1"]
+    assert chunks[0]["text"] == "baseline demand overview.\n\nnearby demand detail."
+
+
+def test_pdf_ingest_drops_page_number_and_symbol_chunks(tmp_path, temp_course_dir):
+    db_path = tmp_path / "crag.db"
+    raw_dir = tmp_path / "raw"
+    conn = connect(db_path)
+    init_db(conn)
+    source = temp_course_dir / "week-04.pdf"
+    source.write_text("fake")
+    payload = {
+        "pages": [
+            {
+                "index": 0,
+                "markdown": (
+                    "4\n\n"
+                    "#\n\n"
+                    "Demand curves show how quantity demanded changes with price.\n\n"
+                    "✗"
+                ),
+            }
+        ]
+    }
+
+    ingest_file(
+        conn,
+        source,
+        PayloadOcrClient(payload),
+        raw_dir,
+        embedding_model=TopicEmbeddingModel(),
+    )
+
+    chunks = conn.execute(
+        "SELECT text, location FROM chunks ORDER BY chunk_index"
+    ).fetchall()
+
+    assert [row["text"] for row in chunks] == [
+        "Demand curves show how quantity demanded changes with price."
+    ]
+    assert [row["location"] for row in chunks] == ["P1"]
+
+
+def test_pdf_ingest_merges_short_real_text_with_neighbor(tmp_path, temp_course_dir):
+    db_path = tmp_path / "crag.db"
+    raw_dir = tmp_path / "raw"
+    conn = connect(db_path)
+    init_db(conn)
+    source = temp_course_dir / "week-05.pdf"
+    source.write_text("fake")
+    payload = {
+        "pages": [
+            {
+                "index": 0,
+                "markdown": (
+                    "Overview\n\n"
+                    "Demand curves show how quantity demanded changes with price.\n\n"
+                    "Photosynthesis uses sunlight in chloroplasts."
+                ),
+            }
+        ]
+    }
+
+    ingest_file(
+        conn,
+        source,
+        PayloadOcrClient(payload),
+        raw_dir,
+        embedding_model=TopicEmbeddingModel(),
+    )
+
+    chunks = conn.execute(
+        "SELECT text, location FROM chunks ORDER BY chunk_index"
+    ).fetchall()
+
+    assert [row["text"] for row in chunks] == [
+        "Overview\n\nDemand curves show how quantity demanded changes with price.",
+        "Photosynthesis uses sunlight in chloroplasts.",
+    ]
     assert [row["location"] for row in chunks] == ["P1.1", "P1.2"]
 
 
@@ -699,3 +778,43 @@ def test_ingest_cli_loads_embedding_model_once_and_passes_it_to_each_file(
     assert load_calls == ["load"]
     assert [call[0] for call in ingest_calls] == [first, second]
     assert [call[3] for call in ingest_calls] == [embedding_model, embedding_model]
+
+
+def test_ingest_cli_outputs_progress_for_each_file(
+    monkeypatch, tmp_path, temp_course_dir
+):
+    import crag.config as config_module
+    import crag.db as db_module
+    import crag.embeddings as embeddings_module
+    import crag.ingest as ingest_module
+
+    db_path = tmp_path / "crag.db"
+    raw_dir = tmp_path / "raw"
+    conn = connect(db_path)
+    first = temp_course_dir / "week-01.pptx"
+    second = temp_course_dir / "week-02.pptx"
+    first.write_text("fake")
+    second.write_text("fake")
+
+    class FakeMistralOcrClient:
+        def __init__(self, api_key: str):
+            self.api_key = api_key
+
+    fake_ocr_module = types.SimpleNamespace(MistralOcrClient=FakeMistralOcrClient)
+    monkeypatch.setenv("MISTRAL_API_KEY", "test-key")
+    monkeypatch.setitem(sys.modules, "crag.ocr", fake_ocr_module)
+    monkeypatch.setattr(config_module, "RAW_OCR_DIR", raw_dir)
+    monkeypatch.setattr(db_module, "connect", lambda: conn)
+    monkeypatch.setattr(db_module, "ensure_app_dirs", lambda: None)
+    monkeypatch.setattr(embeddings_module, "load_model_for_download", lambda: object())
+    monkeypatch.setattr(ingest_module, "ingest_file", lambda *_args, **_kwargs: 1)
+    runner = CliRunner()
+
+    result = runner.invoke(app, ["ingest", str(temp_course_dir)])
+
+    assert result.exit_code == 0
+    assert "Loading embedding model..." in result.output
+    assert "[1/2] Ingesting week-01.pptx..." in result.output
+    assert "Indexed week-01.pptx." in result.output
+    assert "[2/2] Ingesting week-02.pptx..." in result.output
+    assert "Indexed week-02.pptx." in result.output

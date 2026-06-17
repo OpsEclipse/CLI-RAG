@@ -479,6 +479,34 @@ def test_cli_hybrid_search_loads_embedding_model_local_only(tmp_path, monkeypatc
     assert load_calls == [True]
 
 
+def test_cli_hybrid_search_outputs_loading_indicator(tmp_path, monkeypatch):
+    conn = connect(tmp_path / "crag.db")
+    init_db(conn)
+    seed_chunk(
+        conn,
+        "week-01.pptx",
+        "Elasticity appears here.",
+        "Elasticity",
+        "S1",
+        np.array([1, 0], dtype=np.float32),
+    )
+    conn.close()
+
+    class FakeModel:
+        def encode(self, texts, normalize_embeddings=True):
+            return [np.array([1.0, 0.0], dtype=np.float32)]
+
+    monkeypatch.setattr("crag.config.DB_PATH", tmp_path / "crag.db")
+    monkeypatch.setattr("crag.embeddings.load_model", lambda local_only=True: FakeModel())
+    runner = CliRunner()
+
+    result = runner.invoke(app_for_test(), ["search", "elasticity"])
+
+    assert result.exit_code == 0
+    assert "Searching locally..." in result.output
+    assert "Embedding query..." in result.output
+
+
 def test_cli_rejects_keyword_and_semantic_together():
     runner = CliRunner()
 
